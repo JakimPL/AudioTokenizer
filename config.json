@@ -1,0 +1,9 @@
+{
+    "unit_length": 441,
+    "layers": 32,
+    "channels_per_layer": 1,
+    "volume_resolution": 64,
+    "increase_resolution": true,
+    "max_rows": 64,
+    "pattern_compression": true
+}
