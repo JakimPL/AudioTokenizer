@@ -1,5 +1,5 @@
 import os
-from typing import Tuple, List
+from typing import List, Optional, Tuple
 
 import numpy as np
 import scipy.io.wavfile as wav
@@ -13,15 +13,19 @@ class AudioCompressor:
             unit_length: int,
             volume_resolution: int,
             channels_per_layer: int = 1,
-            increase_resolution: bool = True
+            increase_resolution: bool = True,
+            samples_per_instrument: int = 1
     ):
         self.unit_length = unit_length
         self.volume_resolution = volume_resolution
         self.factor = round(np.sqrt(volume_resolution))
 
         self.increase_resolution = increase_resolution
-        self.samples_per_instrument = 4 if increase_resolution else 2
         self.channels_per_layer = channels_per_layer
+
+        self.samples_per_instrument = samples_per_instrument
+        self.sample_copies = 4 if increase_resolution else 2
+        self.instrument_size = samples_per_instrument * self.sample_copies
 
     @staticmethod
     def find_approximation(signal_matrix: np.ndarray, samples: int) -> Tuple[np.ndarray, np.ndarray]:
@@ -45,21 +49,28 @@ class AudioCompressor:
         signal_matrix = padded_signal.reshape(-1, self.unit_length)
         return self.find_approximation(signal_matrix, layers)
 
+    def prepare_amplitude_data(self, sample_data: np.ndarray) -> np.ndarray:
+        amplitude_data = np.abs(sample_data).max(axis=1)[:, np.newaxis]
+        amplitude_data_groups = np.max(amplitude_data.reshape(-1, self.samples_per_instrument), axis=1)[:, np.newaxis]
+        amplitude_data = np.repeat(amplitude_data_groups, self.samples_per_instrument, axis=0)
+        return amplitude_data
+
+    def scale_amplitude_data(self, amplitude_data: np.ndarray) -> np.ndarray:
+        amplitude_data = self.volume_resolution * amplitude_data / amplitude_data.max()
+        return amplitude_data.reshape(-1)
+
     def normalize_audio(self, sample_data: np.ndarray, volume_data: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         volume_data = volume_data / np.abs(volume_data).max()
         volume_maximum = np.abs(volume_data).max(axis=1)[:, np.newaxis]
 
         sample_data = sample_data / volume_maximum
         volume_data = volume_data / volume_maximum
-
         sample_data = sample_data / np.abs(sample_data).max()
 
-        amplitude_data = np.abs(sample_data).max(axis=1)[:, np.newaxis]
+        amplitude_data = self.prepare_amplitude_data(sample_data)
         sample_data = sample_data / amplitude_data
 
-        amplitude_data = self.volume_resolution * amplitude_data / amplitude_data.max()
-        amplitude_data = amplitude_data.reshape(-1)
-
+        amplitude_data = self.scale_amplitude_data(amplitude_data)
         quiet_samples = np.where(amplitude_data < self.factor)
         for index in quiet_samples:
             sample_data[index] = sample_data[index] * amplitude_data[index, np.newaxis] / self.factor
@@ -73,11 +84,12 @@ class AudioCompressor:
             factor = self.factor / self.volume_resolution
             samples += [factor * sample_data, -factor * sample_data]
 
-        number_of_samples = sample_data.shape[0] * self.samples_per_instrument
+        number_of_samples = sample_data.shape[0] * self.sample_copies
         sample_data = np.stack(samples).transpose((1, 0, 2))
         return sample_data.reshape(number_of_samples, -1)
 
-    def compress_pattern_data(self, pattern_data: np.ndarray, energy_data: np.ndarray, max_channels: int) -> np.ndarray:
+    @staticmethod
+    def compress_pattern_data(pattern_data: np.ndarray, energy_data: np.ndarray, max_channels: int) -> np.ndarray:
         lines = []
         max_length = 0
         for index in range(pattern_data.shape[1]):
@@ -140,7 +152,7 @@ class AudioCompressor:
 
         instruments_data, volume_data = self.double_pattern_data(instruments_data, volume_data)
         instruments_data, volume_data = self.discretize_volume_data(instruments_data, volume_data)
-        instruments_data += offset * self.samples_per_instrument
+        instruments_data += offset * self.instrument_size
         return np.stack([volume_data, instruments_data, delay_data]).transpose((1, 2, 0))
 
     def __call__(
@@ -162,6 +174,7 @@ class AudioCompressor:
             sample_data = self.prepare_sample_data(sample_data)
             pattern_data = self.prepare_pattern_data(volume_data, number_of_samples, offset)
             pattern_data = self.compress_pattern_data(pattern_data, energy_data, number_of_layers)
+            amplitude_data = amplitude_data[::self.samples_per_instrument]
 
             samples.append(sample_data)
             amplitudes.append(amplitude_data)

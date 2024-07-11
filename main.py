@@ -5,7 +5,7 @@ from compressor import AudioCompressor
 from module import ModuleGenerator
 
 if __name__ == "__main__":
-    with open('config.json', 'r') as config_file:
+    with open("config.json", "r") as config_file:
         config = json.load(config_file)
 
         UNIT_LENGTH = config["unit_length"]
@@ -15,16 +15,15 @@ if __name__ == "__main__":
         VOLUME_RESOLUTION = config["volume_resolution"]
         INCREASE_RESOLUTION = config["increase_resolution"]
         MAX_ROWS = config["max_rows"]
+        SAMPLES_PER_INSTRUMENT = config["samples_per_instrument"]
 
-        SAMPLES_PER_INSTRUMENT = 4 if INCREASE_RESOLUTION else 2
-
-    parser = argparse.ArgumentParser(description='Process audio files.')
-    parser.add_argument('--inputs', '-i', nargs='+', required=True, help='Input paths')
-    parser.add_argument('--layers', '-l', nargs='+', type=int, required=False, help='Layer sizes')
-    parser.add_argument('--samples', '-s', nargs='+', type=int, required=False, help='Sample sizes')
-    parser.add_argument('--output', '-o', type=str, required=True, help='Output path for the module file')
-    parser.add_argument('--title', '-t', type=str, default='Tokenizer', help='Title of the module (default: Tokenizer)')
-    parser.add_argument('--unit', '-u', type=int, default=UNIT_LENGTH, help='The size of a token.')
+    parser = argparse.ArgumentParser(description="Process audio files.")
+    parser.add_argument("--inputs", "-i", nargs="+", required=True, help="Input paths")
+    parser.add_argument("--layers", "-l", nargs="+", type=int, required=False, help="Layer sizes")
+    parser.add_argument("--samples", "-s", nargs="+", type=int, required=False, help="Sample sizes")
+    parser.add_argument("--output", "-o", type=str, required=True, help="Output path for the module file")
+    parser.add_argument("--title", "-t", type=str, default="Tokenizer", help="Title of the module (default: Tokenizer)")
+    parser.add_argument("--unit", "-u", type=int, default=UNIT_LENGTH, help="The size of a token.")
 
     args = parser.parse_args()
     input_paths = args.inputs
@@ -37,7 +36,8 @@ if __name__ == "__main__":
         unit_length=UNIT_LENGTH,
         volume_resolution=VOLUME_RESOLUTION,
         channels_per_layer=CHANNELS_PER_LAYER,
-        increase_resolution=INCREASE_RESOLUTION
+        increase_resolution=INCREASE_RESOLUTION,
+        samples_per_instrument=SAMPLES_PER_INSTRUMENT,
     )
 
     sample_data, amplitude_data, pattern_data = audio_compressor(
@@ -46,12 +46,13 @@ if __name__ == "__main__":
         samples_per_signal=samples
     )
 
+    samples_per_instrument = SAMPLES_PER_INSTRUMENT * (4 if INCREASE_RESOLUTION else 2)
     mg = ModuleGenerator(
         title,
         pattern_data=pattern_data,
         sample_data=sample_data,
         amplitude_data=amplitude_data,
-        samples_per_instrument=SAMPLES_PER_INSTRUMENT,
+        samples_per_instrument=samples_per_instrument,
         speed=CHANNELS_PER_LAYER,
         max_rows=MAX_ROWS
     )
