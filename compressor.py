@@ -13,7 +13,6 @@ class AudioCompressor:
             unit_length: int,
             volume_resolution: int,
             channels_per_layer: int = 1,
-            pattern_compression: bool = False,
             increase_resolution: bool = True
     ):
         self.unit_length = unit_length
@@ -23,13 +22,6 @@ class AudioCompressor:
         self.increase_resolution = increase_resolution
         self.samples_per_instrument = 4 if increase_resolution else 2
         self.channels_per_layer = channels_per_layer
-
-        self.pattern_compression = pattern_compression
-
-    @staticmethod
-    def relu(x: np.ndarray) -> np.ndarray:
-        y = x.copy()
-        return np.maximum(y, 0, y)
 
     @staticmethod
     def find_approximation(signal_matrix: np.ndarray, samples: int) -> Tuple[np.ndarray, np.ndarray]:
@@ -85,17 +77,23 @@ class AudioCompressor:
         sample_data = np.stack(samples).transpose((1, 0, 2))
         return sample_data.reshape(number_of_samples, -1)
 
-    def compress_pattern_data(self, pattern_data: np.ndarray) -> np.ndarray:
+    def compress_pattern_data(self, pattern_data: np.ndarray, energy_data: np.ndarray, max_channels: int) -> np.ndarray:
         lines = []
         max_length = 0
         for index in range(pattern_data.shape[1]):
             line = pattern_data[:, index]
+
             volumes = line[:, 0]
+            energies = volumes * energy_data
+
             positive_indices = np.where(volumes > 0)[0]
             filtered_line = line[positive_indices]
+            filtered_energies = energies[positive_indices]
+            top_indices = np.argsort(-filtered_energies)[:max_channels]
+            top_filtered_line = filtered_line[top_indices]
 
-            max_length = max(max_length, len(positive_indices))
-            lines.append(filtered_line)
+            max_length = max(max_length, len(top_indices))
+            lines.append(top_filtered_line)
 
         constant_item = np.array([[-1, -1, -1]])
         final_lines = []
@@ -148,31 +146,31 @@ class AudioCompressor:
     def __call__(
             self,
             input_paths: List[os.PathLike],
-            layers: List[int]
+            layers_per_signal: List[int],
+            samples_per_signal: List[int]
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         offset = 0
         samples, amplitudes, patterns = [], [], []
-        for input_path, layers in zip(input_paths, layers):
+        for input_path, number_of_layers, number_of_samples in zip(input_paths, layers_per_signal, samples_per_signal):
             sampling_rate, signal = wav.read(input_path)
             signal = convert_to_mono(signal)
 
-            sample_data, volume_data = self.compress_audio(signal, layers)
+            sample_data, volume_data = self.compress_audio(signal, number_of_samples)
             sample_data, volume_data, amplitude_data = self.normalize_audio(sample_data, volume_data)
 
+            energy_data = amplitude_data * np.sum(sample_data ** 2, axis=1)
             sample_data = self.prepare_sample_data(sample_data)
-            pattern_data = self.prepare_pattern_data(volume_data, layers, offset)
+            pattern_data = self.prepare_pattern_data(volume_data, number_of_samples, offset)
+            pattern_data = self.compress_pattern_data(pattern_data, energy_data, number_of_layers)
 
             samples.append(sample_data)
             amplitudes.append(amplitude_data)
             patterns.append(pattern_data)
 
-            offset += layers
+            offset += number_of_samples
 
         sample_data = np.vstack(samples)
         amplitude_data = np.hstack(amplitudes)
         pattern_data = np.vstack(patterns)
-
-        if self.pattern_compression:
-            pattern_data = self.compress_pattern_data(pattern_data)
 
         return sample_data, amplitude_data, pattern_data

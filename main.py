@@ -10,18 +10,18 @@ if __name__ == "__main__":
 
         UNIT_LENGTH = config["unit_length"]
         LAYERS = config["layers"]
+        SAMPLES = config["samples"]
         CHANNELS_PER_LAYER = config["channels_per_layer"]
         VOLUME_RESOLUTION = config["volume_resolution"]
         INCREASE_RESOLUTION = config["increase_resolution"]
-
         MAX_ROWS = config["max_rows"]
-        PATTERN_COMPRESSION = config["pattern_compression"]
 
         SAMPLES_PER_INSTRUMENT = 4 if INCREASE_RESOLUTION else 2
 
     parser = argparse.ArgumentParser(description='Process audio files.')
     parser.add_argument('--inputs', '-i', nargs='+', required=True, help='Input paths')
     parser.add_argument('--layers', '-l', nargs='+', type=int, required=False, help='Layer sizes')
+    parser.add_argument('--samples', '-s', nargs='+', type=int, required=False, help='Sample sizes')
     parser.add_argument('--output', '-o', type=str, required=True, help='Output path for the module file')
     parser.add_argument('--title', '-t', type=str, default='Tokenizer', help='Title of the module (default: Tokenizer)')
     parser.add_argument('--unit', '-u', type=int, default=UNIT_LENGTH, help='The size of a token.')
@@ -29,6 +29,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     input_paths = args.inputs
     layers = args.layers or [LAYERS] * len(input_paths)
+    samples = args.samples or [SAMPLES] * len(input_paths)
     output_path = args.output
     title = args.title
 
@@ -36,11 +37,14 @@ if __name__ == "__main__":
         unit_length=UNIT_LENGTH,
         volume_resolution=VOLUME_RESOLUTION,
         channels_per_layer=CHANNELS_PER_LAYER,
-        increase_resolution=INCREASE_RESOLUTION,
-        pattern_compression=PATTERN_COMPRESSION
+        increase_resolution=INCREASE_RESOLUTION
     )
 
-    sample_data, amplitude_data, pattern_data = audio_compressor(input_paths, layers)
+    sample_data, amplitude_data, pattern_data = audio_compressor(
+        input_paths=input_paths,
+        layers_per_signal=layers,
+        samples_per_signal=samples
+    )
 
     mg = ModuleGenerator(
         title,
