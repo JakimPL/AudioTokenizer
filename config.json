@@ -6,5 +6,6 @@
     "volume_resolution": 64,
     "increase_resolution": true,
     "samples_per_instrument": 4,
+    "amplification": 1.0,
     "max_rows": 64
 }

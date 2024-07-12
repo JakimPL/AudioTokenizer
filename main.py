@@ -8,14 +8,18 @@ if __name__ == "__main__":
     with open("config.json", "r") as config_file:
         config = json.load(config_file)
 
-        UNIT_LENGTH = config["unit_length"]
         LAYERS = config["layers"]
         SAMPLES = config["samples"]
+
+        UNIT_LENGTH = config["unit_length"]
         CHANNELS_PER_LAYER = config["channels_per_layer"]
+
         VOLUME_RESOLUTION = config["volume_resolution"]
         INCREASE_RESOLUTION = config["increase_resolution"]
-        MAX_ROWS = config["max_rows"]
+        AMPLIFICATION = config["amplification"]
+
         SAMPLES_PER_INSTRUMENT = config["samples_per_instrument"]
+        MAX_ROWS = config["max_rows"]
 
     parser = argparse.ArgumentParser(description="Process audio files.")
     parser.add_argument("--inputs", "-i", nargs="+", required=True, help="Input paths")
@@ -24,6 +28,7 @@ if __name__ == "__main__":
     parser.add_argument("--output", "-o", type=str, required=True, help="Output path for the module file")
     parser.add_argument("--title", "-t", type=str, default="Tokenizer", help="Title of the module (default: Tokenizer)")
     parser.add_argument("--unit", "-u", type=int, default=UNIT_LENGTH, help="The size of a token.")
+    parser.add_argument("--amplify", "-a", type=float, default=AMPLIFICATION, help="Amplify the volume data.")
 
     args = parser.parse_args()
     input_paths = args.inputs
@@ -31,13 +36,16 @@ if __name__ == "__main__":
     samples = args.samples or [SAMPLES] * len(input_paths)
     output_path = args.output
     title = args.title
+    unit_length = args.unit
+    amplification = args.amplify
 
     audio_compressor = AudioCompressor(
-        unit_length=UNIT_LENGTH,
+        unit_length=unit_length,
         volume_resolution=VOLUME_RESOLUTION,
         channels_per_layer=CHANNELS_PER_LAYER,
         increase_resolution=INCREASE_RESOLUTION,
         samples_per_instrument=SAMPLES_PER_INSTRUMENT,
+        amplification=amplification
     )
 
     sample_data, amplitude_data, pattern_data = audio_compressor(
