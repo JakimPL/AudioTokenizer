@@ -1,8 +1,18 @@
+from pathlib import Path
 import argparse
 import json
 
 from compressor import AudioCompressor
 from module import ModuleGenerator
+
+
+def infer_module_format(path: Path) -> str:
+    module_format = path.suffix[1:].lower()
+    if module_format not in ["xm", "it"]:
+        raise ValueError(f"Unsupported module format: {module_format}. The supported formats are XM and IT.")
+
+    return module_format
+
 
 if __name__ == "__main__":
     with open("config.json", "r") as config_file:
@@ -35,10 +45,13 @@ if __name__ == "__main__":
     input_paths = args.inputs
     layers = args.layers or [LAYERS] * len(input_paths)
     samples = args.samples or [SAMPLES] * len(input_paths)
-    output_path = args.output
+    output_path = Path(args.output)
     title = args.title
     unit_length = args.unit
     amplification = args.amplify
+
+    module_format = infer_module_format(output_path)
+    module_generator_class = ModuleGenerator.get_module_generator_class(module_format)
 
     audio_compressor = AudioCompressor(
         unit_length=unit_length,
@@ -57,8 +70,8 @@ if __name__ == "__main__":
     )
 
     samples_per_instrument = SAMPLES_PER_INSTRUMENT * (4 if INCREASE_RESOLUTION else 2)
-    mg = ModuleGenerator(
-        title,
+    mg = module_generator_class(
+        title=title,
         pattern_data=pattern_data,
         sample_data=sample_data,
         amplitude_data=amplitude_data,

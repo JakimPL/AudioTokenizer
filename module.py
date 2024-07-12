@@ -1,9 +1,9 @@
+import os
 import struct
 from typing import Dict, Tuple
 
 import numpy as np
 
-HEADER = "Extended Module: "
 TRACKER_NAME = "Stage Magician"
 C_NOTE = 0x19
 
@@ -37,6 +37,16 @@ class ModuleGenerator:
 
         self.instruments_map = self.generate_instruments_map()
 
+    @classmethod
+    def get_module_generator_class(cls, module_format: str):
+        if module_format == "xm":
+            return XMModuleGenerator
+
+        if module_format == "it":
+            return ITModuleGenerator
+
+        raise ValueError(f"Unsupported module format: {module_format}")
+
     def calculate_number_of_samples(self) -> int:
         return self.sample_data.shape[0]
 
@@ -44,8 +54,7 @@ class ModuleGenerator:
         return self.pattern_data.shape[0]
 
     def calculate_number_of_rows(self, max_rows: int) -> int:
-        rows = int(65535 / (self.channels * 5))
-        return max(1, min(rows, max_rows))
+        raise NotImplementedError
 
     def calculate_number_of_patterns(self) -> int:
         length = self.pattern_data.shape[1]
@@ -80,26 +89,86 @@ class ModuleGenerator:
         string = string[:length].encode()
         return string + bytes([pad_value] * (length - len(string)))
 
+    def get_title(self) -> bytes:
+        raise NotImplementedError
+
+    def get_tracker_name(self) -> bytes:
+        raise NotImplementedError
+
+    def generate(self) -> bytes:
+        raise NotImplementedError
+
+    def save(self, path: os.PathLike):
+        with open(path, "wb") as f:
+            content = self.generate()
+            f.write(content)
+
+
+class XMModuleGenerator(ModuleGenerator):
+    HEADER = "Extended Module: "
+
+    def __init__(
+            self,
+            title: str,
+            pattern_data: np.ndarray,
+            sample_data: np.ndarray,
+            amplitude_data: np.ndarray,
+            speed: int = 16,
+            samples_per_instrument: int = 16,
+            max_rows: int = 256
+    ):
+        super().__init__(
+            title,
+            pattern_data,
+            sample_data,
+            amplitude_data,
+            speed,
+            samples_per_instrument,
+            max_rows
+        )
+
+    def calculate_number_of_samples(self) -> int:
+        return self.sample_data.shape[0]
+
+    def calculate_number_of_channels(self) -> int:
+        return self.pattern_data.shape[0]
+
+    def calculate_number_of_rows(self, max_rows: int) -> int:
+        rows = int(65535 / (self.channels * 5))
+        return max(1, min(rows, max_rows))
+
+    def calculate_number_of_patterns(self) -> int:
+        length = self.pattern_data.shape[1]
+        return int(np.ceil(length / self.rows))
+
+    def calculate_number_of_instruments(self) -> int:
+        instruments = self.samples / self.samples_per_instrument
+        return int(np.ceil(instruments))
+
+    def pad(self, string: str, length: int, pad_value: int = 0x00) -> bytes:
+        string = string[:length].encode()
+        return string + bytes([pad_value] * (length - len(string)))
+
     def get_relative_note_number(self, note: int, base: int = C_NOTE) -> int:
         return base + note
 
     def get_header(self) -> bytes:
-        return HEADER.encode()
+        return self.HEADER.encode()
 
     def get_title(self) -> bytes:
         return self.pad(self.title, 20)
 
     def get_stripped(self) -> bytes:
-        return bytes([0x1A])
+        return struct.pack("<B", 0x1A)
 
     def get_tracker_name(self) -> bytes:
         return self.pad(TRACKER_NAME, 20)
 
     def get_version(self) -> bytes:
-        return bytes([0x04, 0x01])
+        return struct.pack('BB', 0x04, 0x01)
 
     def get_header_size(self) -> bytes:
-        return bytes([0x14, 0x01, 0x00, 0x00])
+        return struct.pack('<4B', 0x14, 0x01, 0x00, 0x00)
 
     def get_song_length(self) -> bytes:
         return struct.pack("<H", self.patterns)
@@ -158,10 +227,10 @@ class ModuleGenerator:
         return b''.join(header)
 
     def get_pattern_header(self) -> bytes:
-        return bytes([0x09, 0x00, 0x00, 0x00])
+        return struct.pack('<4B', 0x09, 0x00, 0x00, 0x00)
 
     def get_packing_type(self) -> bytes:
-        return bytes([0x00])
+        return struct.pack('<B', 0x00)
 
     def get_rows(self) -> bytes:
         return struct.pack("<H", self.rows)
@@ -210,13 +279,13 @@ class ModuleGenerator:
         ])
 
     def get_instrument_size(self) -> bytes:
-        return bytes([0x07, 0x01, 0x00, 0x00])
+        return struct.pack('<4B', 0x07, 0x01, 0x00, 0x00)
 
     def get_instrument_name(self, instrument: int) -> bytes:
         return self.pad(f"instrument{instrument + 1}", 22)
 
     def get_instrument_type(self) -> bytes:
-        return bytes([0x00])
+        return struct.pack('<B', 0x00)
 
     def get_number_of_samples(self, instrument: int) -> bytes:
         if instrument * self.samples_per_instrument < self.samples:
@@ -227,7 +296,7 @@ class ModuleGenerator:
         return struct.pack("<H", samples)
 
     def get_sample_header_size(self) -> bytes:
-        return bytes([0x28, 0x00, 0x00, 0x00])
+        return struct.pack('<4B', 0x28, 0x00, 0x00, 0x00)
 
     def get_keymap_assignment(self) -> bytes:
         assignment = []
@@ -241,73 +310,73 @@ class ModuleGenerator:
         return bytes(assignment)
 
     def get_volume_envelope(self, volume: int = 0x40) -> bytes:
-        return bytes([
-                         0x00, 0x00, volume, 0x00,
-                         0x01, 0x00, volume, 0x00,
-                         0x02, 0x00, 0x00, 0x00,
-                     ] + [0x00, 0x00, 0x00, 0x00] * 9)
+        return struct.pack('<12B36B',
+                           0x00, 0x00, volume, 0x00,
+                           0x01, 0x00, volume, 0x00,
+                           0x02, 0x00, 0x00, 0x00,
+                           *(0x00, 0x00, 0x00, 0x00) * 9)
 
     def get_panning_envelope(self) -> bytes:
-        return bytes([0x00, 0x00, 0x00, 0x00] * 12)
+        return struct.pack('<48B', *(0x00, 0x00, 0x00, 0x00) * 12)
 
     def get_number_of_volume_envelope_points(self) -> bytes:
-        return bytes([0x02])
+        return struct.pack('<B', 0x02)
 
     def get_number_of_panning_envelope_points(self) -> bytes:
-        return bytes([0x00])
+        return struct.pack('<B', 0x00)
 
     def get_volume_sustain_point(self) -> bytes:
-        return bytes([0x02])
+        return struct.pack('<B', 0x02)
 
     def get_volume_envelope_loop(self) -> bytes:
-        return struct.pack("<H", 0)
+        return struct.pack('<H', 0)
 
     def get_panning_sustain_point(self) -> bytes:
-        return bytes([0x00])
+        return struct.pack('<B', 0x00)
 
     def get_panning_envelope_loop(self) -> bytes:
-        return struct.pack("<H", 0)
+        return struct.pack('<H', 0)
 
     def get_volume_type(self) -> bytes:
-        return bytes([0x01])
+        return struct.pack('<B', 0x01)
 
     def get_panning_type(self) -> bytes:
-        return bytes([0x00])
+        return struct.pack('<B', 0x00)
 
     def get_vibrato(self) -> bytes:
-        return bytes([0x00, 0x00, 0x00, 0x00])
+        return struct.pack('<4B', 0x00, 0x00, 0x00, 0x00)
 
     def get_volume_fadeout(self) -> bytes:
-        return bytes([0x00, 0x04])
+        return struct.pack('<2B', 0x00, 0x04)
 
     def get_reserved(self) -> bytes:
-        return bytes([0x00] * 22)
+        return struct.pack('<22B', *(0x00,) * 22)
 
     def get_sample_length(self) -> bytes:
-        return struct.pack("<I", self.sample_length * 2)
+        return struct.pack('<I', self.sample_length * 2)
 
     def get_sample_loop(self) -> bytes:
-        return bytes([0x00, 0x00, 0x00, 0x00])
+        return struct.pack('<4B', 0x00, 0x00, 0x00, 0x00)
 
     def get_sample_volume(self) -> bytes:
-        return bytes([0x40])
+        return struct.pack('<B', 0x40)
 
     def get_sample_finetune(self) -> bytes:
-        return bytes([0xE0])
+        return struct.pack('<B', 0xE0)
 
     def get_sample_type(self) -> bytes:
-        return bytes([0b0010000])
+        return struct.pack('<B', 0b0010000)
 
     def get_sample_panning(self) -> bytes:
-        return bytes([0x7C])
+        return struct.pack('<B', 0x7C)
 
     def get_sample_relative_note_number(self, sample) -> bytes:
         base_value = 0x35
         value = (base_value - sample % self.samples_per_instrument) % 256
-        return bytes([value])
+        return struct.pack('<B', value)
 
     def get_sample_compression(self) -> bytes:
-        return bytes([0x00])
+        return struct.pack('<B', 0x00)
 
     def get_sample_name(self, sample: int) -> bytes:
         return self.pad(f"sample{sample + 1}", 22)
@@ -380,7 +449,31 @@ class ModuleGenerator:
 
         return header + patterns + instruments
 
-    def save(self, path: str):
+    def save(self, path: os.PathLike):
         with open(path, "wb") as f:
             content = self.generate()
             f.write(content)
+
+
+class ITModuleGenerator(ModuleGenerator):
+    HEADER = "IMPM"
+
+    def __init__(
+            self,
+            title: str,
+            pattern_data: np.ndarray,
+            sample_data: np.ndarray,
+            amplitude_data: np.ndarray,
+            speed: int = 16,
+            samples_per_instrument: int = 16,
+            max_rows: int = 256
+    ):
+        super().__init__(
+            title,
+            pattern_data,
+            sample_data,
+            amplitude_data,
+            speed,
+            samples_per_instrument,
+            max_rows
+        )
