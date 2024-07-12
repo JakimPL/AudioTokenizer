@@ -16,6 +16,7 @@ if __name__ == "__main__":
 
         VOLUME_RESOLUTION = config["volume_resolution"]
         INCREASE_RESOLUTION = config["increase_resolution"]
+        MIN_INSTRUMENT_VOLUME_ENVELOPE = config["min_instrument_volume_envelope"]
         AMPLIFICATION = config["amplification"]
 
         SAMPLES_PER_INSTRUMENT = config["samples_per_instrument"]
@@ -44,6 +45,7 @@ if __name__ == "__main__":
         volume_resolution=VOLUME_RESOLUTION,
         channels_per_layer=CHANNELS_PER_LAYER,
         increase_resolution=INCREASE_RESOLUTION,
+        min_instrument_volume_envelope=MIN_INSTRUMENT_VOLUME_ENVELOPE,
         samples_per_instrument=SAMPLES_PER_INSTRUMENT,
         amplification=amplification
     )

@@ -1,5 +1,5 @@
 import os
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 import warnings
 
 import numpy as np
@@ -15,6 +15,7 @@ class AudioCompressor:
             volume_resolution: int,
             channels_per_layer: int = 1,
             increase_resolution: bool = True,
+            min_instrument_volume_envelope: int = 4,
             samples_per_instrument: int = 1,
             amplification: float = 1.0
     ):
@@ -23,6 +24,7 @@ class AudioCompressor:
         self.factor: int = round(np.sqrt(volume_resolution))
 
         self.increase_resolution: bool = increase_resolution
+        self.min_instrument_volume_envelope: int = min_instrument_volume_envelope
         self.channels_per_layer: int = channels_per_layer
 
         self.samples_per_instrument: int = samples_per_instrument
@@ -120,6 +122,20 @@ class AudioCompressor:
         amplitude_data = self.volume_resolution * amplitude_data / amplitude_data.max()
         return amplitude_data.reshape(-1)
 
+    def normalize_sample_data(self, sample_data: np.ndarray, amplitude_data: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        min_instrument_volume_envelope = np.clip(self.min_instrument_volume_envelope, 1, self.volume_resolution)
+        quiet_samples = np.where(amplitude_data < min_instrument_volume_envelope)[0]
+
+        for index in range(sample_data.shape[0]):
+            if index in quiet_samples:
+                sample_data[index] = sample_data[index] * amplitude_data[index, np.newaxis] / min_instrument_volume_envelope
+                amplitude_data[index] = min_instrument_volume_envelope
+            else:
+                amplitude_data[index] = np.round(amplitude_data[index])
+                sample_data[index] = sample_data[index] * amplitude_data[index, np.newaxis] / self.volume_resolution
+
+        return sample_data, amplitude_data
+
     def normalize_audio(self, sample_data: np.ndarray, volume_data: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         volume_data = volume_data / np.abs(volume_data).max()
         volume_maximum = np.abs(volume_data).max(axis=1)[:, np.newaxis]
@@ -132,10 +148,7 @@ class AudioCompressor:
         sample_data = sample_data / amplitude_data
 
         amplitude_data = self.scale_amplitude_data(amplitude_data)
-        quiet_samples = np.where(amplitude_data < self.factor)
-        for index in quiet_samples:
-            sample_data[index] = sample_data[index] * amplitude_data[index, np.newaxis] / self.factor
-            amplitude_data[index] = self.factor
+        sample_data, amplitude_data = self.normalize_sample_data(sample_data, amplitude_data)
 
         return sample_data, volume_data, amplitude_data
 
