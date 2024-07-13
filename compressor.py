@@ -116,7 +116,7 @@ class AudioCompressor:
         amplitude_data = np.abs(sample_data).max(axis=1)[:, np.newaxis]
         amplitude_data_groups = np.max(amplitude_data.reshape(-1, self.samples_per_instrument), axis=1)[:, np.newaxis]
         amplitude_data = np.repeat(amplitude_data_groups, self.samples_per_instrument, axis=0)
-        return amplitude_data
+        return np.ceil(amplitude_data)
 
     def scale_amplitude_data(self, amplitude_data: np.ndarray) -> np.ndarray:
         amplitude_data = self.volume_resolution * amplitude_data / amplitude_data.max()
@@ -126,13 +126,9 @@ class AudioCompressor:
         min_instrument_volume_envelope = np.clip(self.min_instrument_volume_envelope, 1, self.volume_resolution)
         quiet_samples = np.where(amplitude_data < min_instrument_volume_envelope)[0]
 
-        for index in range(sample_data.shape[0]):
-            if index in quiet_samples:
-                sample_data[index] = sample_data[index] * amplitude_data[index, np.newaxis] / min_instrument_volume_envelope
-                amplitude_data[index] = min_instrument_volume_envelope
-            else:
-                amplitude_data[index] = np.round(amplitude_data[index])
-                sample_data[index] = sample_data[index] * amplitude_data[index, np.newaxis] / self.volume_resolution
+        for index in quiet_samples:
+            sample_data[index] *= amplitude_data[index, np.newaxis] / min_instrument_volume_envelope
+            amplitude_data[index] = min_instrument_volume_envelope
 
         return sample_data, amplitude_data
 
