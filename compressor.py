@@ -14,7 +14,7 @@ class AudioCompressor:
             unit_length: int,
             volume_resolution: int,
             channels_per_layer: int = 1,
-            increase_resolution: bool = True,
+            increase_volume_resolution: bool = True,
             min_instrument_volume_envelope: int = 4,
             samples_per_instrument: int = 1,
             amplification: float = 1.0
@@ -23,12 +23,12 @@ class AudioCompressor:
         self.volume_resolution: int = volume_resolution
         self.factor: int = round(np.sqrt(volume_resolution))
 
-        self.increase_resolution: bool = increase_resolution
+        self.increase_volume_resolution: bool = increase_volume_resolution
         self.min_instrument_volume_envelope: int = min_instrument_volume_envelope
         self.channels_per_layer: int = channels_per_layer
 
         self.samples_per_instrument: int = samples_per_instrument
-        self.sample_copies: int = 4 if increase_resolution else 2
+        self.sample_copies: int = 4 if increase_volume_resolution else 2
         self.instrument_size: int = samples_per_instrument * self.sample_copies
 
         self.amplification: float = float(np.clip(amplification, 0.0, 1.0))
@@ -116,11 +116,11 @@ class AudioCompressor:
         amplitude_data = np.abs(sample_data).max(axis=1)[:, np.newaxis]
         amplitude_data_groups = np.max(amplitude_data.reshape(-1, self.samples_per_instrument), axis=1)[:, np.newaxis]
         amplitude_data = np.repeat(amplitude_data_groups, self.samples_per_instrument, axis=0)
-        return np.ceil(amplitude_data)
+        return amplitude_data
 
     def scale_amplitude_data(self, amplitude_data: np.ndarray) -> np.ndarray:
         amplitude_data = self.volume_resolution * amplitude_data / amplitude_data.max()
-        return amplitude_data.reshape(-1)
+        return np.ceil(amplitude_data.reshape(-1))
 
     def normalize_sample_data(self, sample_data: np.ndarray, amplitude_data: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         min_instrument_volume_envelope = np.clip(self.min_instrument_volume_envelope, 1, self.volume_resolution)
@@ -150,7 +150,7 @@ class AudioCompressor:
 
     def prepare_sample_data(self, sample_data: np.ndarray) -> np.ndarray:
         samples = [sample_data, -sample_data]
-        if self.increase_resolution:
+        if self.increase_volume_resolution:
             factor = self.factor / self.volume_resolution
             samples += [factor * sample_data, -factor * sample_data]
 
@@ -197,7 +197,7 @@ class AudioCompressor:
         return self.divide_by_channels(instruments_data, layers)
 
     def double_pattern_data(self, instruments_data: np.ndarray, volume_data: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        if self.increase_resolution:
+        if self.increase_volume_resolution:
             quiet_indices = np.where(np.abs(volume_data) < (self.factor / self.volume_resolution))
             volume_data[quiet_indices] = volume_data[quiet_indices] * self.factor
             instruments_data = 2 * (instruments_data - 1) + 1

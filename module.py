@@ -17,6 +17,7 @@ class ModuleGenerator:
             amplitude_data: np.ndarray,
             speed: int = 16,
             samples_per_instrument: int = 16,
+            loop_samples: bool = False,
             max_rows: int = 256
     ):
         self.title = title
@@ -36,6 +37,9 @@ class ModuleGenerator:
         self.bpm = self.calculate_bpm()
 
         self.instruments_map = self.generate_instruments_map()
+
+        self.loop_samples = loop_samples
+        self.sample_size = self.sample_data.shape[-1] + 2 * self.loop_samples
 
     def save(self, path: os.PathLike):
         content = self.generate()
@@ -116,6 +120,7 @@ class XMModuleGenerator(ModuleGenerator):
             amplitude_data: np.ndarray,
             speed: int = 16,
             samples_per_instrument: int = 16,
+            loop_samples: bool = False,
             max_rows: int = 256
     ):
         super().__init__(
@@ -125,7 +130,8 @@ class XMModuleGenerator(ModuleGenerator):
             amplitude_data,
             speed,
             samples_per_instrument,
-            max_rows
+            loop_samples,
+            max_rows,
         )
 
     def calculate_number_of_samples(self) -> int:
@@ -357,10 +363,15 @@ class XMModuleGenerator(ModuleGenerator):
         return struct.pack("<22B", *(0x00,) * 22)
 
     def get_sample_length(self) -> bytes:
-        return struct.pack("<I", self.sample_length * 2)
+        return struct.pack("<I", self.sample_size * 2)
 
-    def get_sample_loop(self) -> bytes:
-        return struct.pack("<4B", 0x00, 0x00, 0x00, 0x00)
+    def get_sample_loop_start(self) -> bytes:
+        loop_start = self.sample_length * 2 if self.loop_samples else 0
+        return struct.pack("<I", loop_start)
+
+    def get_sample_loop_end(self) -> bytes:
+        loop_end = self.sample_size * 2 if self.loop_samples else 0
+        return struct.pack("<I", loop_end)
 
     def get_sample_volume(self) -> bytes:
         return struct.pack("B", 0x40)
@@ -386,14 +397,18 @@ class XMModuleGenerator(ModuleGenerator):
 
     def get_sample_data(self, sample: int) -> bytes:
         sample_data = self.sample_data[sample] * 16383.5
+        if self.loop_samples:
+            constant_value = sample_data[-1]
+            sample_data = np.pad(sample_data, (0, 2), mode="constant", constant_values=constant_value)
+
         delta_array = np.diff(sample_data, prepend=sample_data[0]).astype(np.int16)
         return delta_array.tobytes()
 
     def get_sample_header(self, sample: int) -> bytes:
         return b"".join([
             self.get_sample_length(),
-            self.get_sample_loop(),
-            self.get_sample_loop(),
+            self.get_sample_loop_start(),
+            self.get_sample_loop_end(),
             self.get_sample_volume(),
             self.get_sample_finetune(),
             self.get_sample_type(),
@@ -473,6 +488,7 @@ class ITModuleGenerator(ModuleGenerator):
             amplitude_data: np.ndarray,
             speed: int = 16,
             samples_per_instrument: int = 16,
+            loop_samples: bool = False,
             max_rows: int = 256
     ):
         super().__init__(
@@ -482,6 +498,7 @@ class ITModuleGenerator(ModuleGenerator):
             amplitude_data,
             speed,
             samples_per_instrument,
+            loop_samples,
             max_rows
         )
 
@@ -649,8 +666,9 @@ class ITModuleGenerator(ModuleGenerator):
     def get_instrument_pitch_pan_center(self) -> bytes:
         return struct.pack("B", 0x3C)
 
-    def get_instrument_global_volume(self) -> bytes:
-        return struct.pack("B", 0x80)
+    def get_instrument_global_volume(self, instrument: int) -> bytes:
+        volume = round(2 * self.amplitude_data[instrument])
+        return struct.pack("B", volume)
 
     def get_instrument_default_pan(self) -> bytes:
         return struct.pack("B", 0xA0)
@@ -718,7 +736,7 @@ class ITModuleGenerator(ModuleGenerator):
             "<75B",
             0x40, 0x00, 0x00,
             0x40, 0x01, 0x00,
-            0x00, 0x02, 0x00,
+            0x00, 0x03, 0x00,
             *(0x00, 0x00, 0x00) * 22,
         )
 
@@ -801,7 +819,7 @@ class ITModuleGenerator(ModuleGenerator):
             self.get_instrument_fadeout(),
             self.get_instrument_pitch_pan_separation(),
             self.get_instrument_pitch_pan_center(),
-            self.get_instrument_global_volume(),
+            self.get_instrument_global_volume(instrument),
             self.get_instrument_default_pan(),
             self.get_instrument_random_volume_variation(),
             self.get_instrument_random_pan_variation(),
@@ -839,7 +857,11 @@ class ITModuleGenerator(ModuleGenerator):
         return struct.pack("B", 0x40)
 
     def get_sample_flags(self) -> bytes:
-        return struct.pack("B", 0b00000011)
+        flag = 0b00000011
+        if self.loop_samples:
+            flag |= 0b00010000
+
+        return struct.pack("B", flag)
 
     def get_sample_default_volume(self) -> bytes:
         return struct.pack("B", 0x40)
@@ -848,19 +870,22 @@ class ITModuleGenerator(ModuleGenerator):
         return self.pad(f"sample{sample + 1}", 26)
 
     def get_sample_data_flags(self) -> bytes:
-        return struct.pack("B", 0b00000001)
+        flag = 0b00000001
+        return struct.pack("B", flag)
 
     def get_sample_default_pan(self) -> bytes:
         return struct.pack("B", 0x20)
 
     def get_sample_length(self) -> bytes:
-        return struct.pack("<I", self.sample_data.shape[1])
+        return struct.pack("<I", self.sample_size)
 
     def get_sample_loop_start(self) -> bytes:
-        return struct.pack("<I", 0)
+        loop_start = self.sample_length if self.loop_samples else 0
+        return struct.pack("<I", loop_start)
 
     def get_sample_loop_end(self) -> bytes:
-        return struct.pack("<I", 0)
+        loop_end = self.sample_size if self.loop_samples else 0
+        return struct.pack("<I", loop_end)
 
     def get_sample_c5_speed(self, sample: int) -> bytes:
         sample_index = sample % self.samples_per_instrument
@@ -874,7 +899,7 @@ class ITModuleGenerator(ModuleGenerator):
         return struct.pack("<I", 0)
 
     def get_sample_pointer(self, sample: int, sample_data_offset: int) -> bytes:
-        pointer = sample_data_offset + 2 * sample * self.sample_data.shape[-1]
+        pointer = sample_data_offset + 2 * sample * self.sample_size
         return struct.pack("<I", pointer)
 
     def get_sample_vibrato_speed(self) -> bytes:
@@ -1020,6 +1045,10 @@ class ITModuleGenerator(ModuleGenerator):
 
         for sample_index in range(self.samples):
             sample = np.round(self.sample_data[sample_index] * 16383.5)
+            if self.loop_samples:
+                constant_value = sample[-1]
+                sample = np.pad(sample, (0, 2), "constant", constant_values=(constant_value, constant_value))
+
             sample_data_bytes.extend(sample.astype("int16").tobytes())
 
         return sample_data_bytes

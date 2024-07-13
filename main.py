@@ -25,11 +25,12 @@ if __name__ == "__main__":
         CHANNELS_PER_LAYER = config["channels_per_layer"]
 
         VOLUME_RESOLUTION = config["volume_resolution"]
-        INCREASE_RESOLUTION = config["increase_resolution"]
+        INCREASE_VOLUME_RESOLUTION = config["increase_volume_resolution"]
         MIN_INSTRUMENT_VOLUME_ENVELOPE = config["min_instrument_volume_envelope"]
         AMPLIFICATION = config["amplification"]
 
         SAMPLES_PER_INSTRUMENT = config["samples_per_instrument"]
+        LOOP_SAMPLES = config["loop_samples"]
         MAX_ROWS = config["max_rows"]
 
     parser = argparse.ArgumentParser(description="Process audio files.")
@@ -57,7 +58,7 @@ if __name__ == "__main__":
         unit_length=unit_length,
         volume_resolution=VOLUME_RESOLUTION,
         channels_per_layer=CHANNELS_PER_LAYER,
-        increase_resolution=INCREASE_RESOLUTION,
+        increase_volume_resolution=INCREASE_VOLUME_RESOLUTION,
         min_instrument_volume_envelope=MIN_INSTRUMENT_VOLUME_ENVELOPE,
         samples_per_instrument=SAMPLES_PER_INSTRUMENT,
         amplification=amplification
@@ -69,13 +70,14 @@ if __name__ == "__main__":
         samples_per_signal=samples
     )
 
-    samples_per_instrument = SAMPLES_PER_INSTRUMENT * (4 if INCREASE_RESOLUTION else 2)
+    samples_per_instrument = SAMPLES_PER_INSTRUMENT * (4 if INCREASE_VOLUME_RESOLUTION else 2)
     mg = module_generator_class(
         title=title,
         pattern_data=pattern_data,
         sample_data=sample_data,
         amplitude_data=amplitude_data,
         samples_per_instrument=samples_per_instrument,
+        loop_samples=LOOP_SAMPLES,
         speed=CHANNELS_PER_LAYER,
         max_rows=MAX_ROWS
     )
