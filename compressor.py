@@ -101,7 +101,7 @@ class AudioCompressor:
     @staticmethod
     def get_updated_sizes(sample_data: np.ndarray, number_of_layers: int) -> Tuple[int, int]:
         number_of_samples = sample_data.shape[0]
-        number_of_layers = min(number_of_layers, number_of_samples)
+        number_of_layers = min(120, number_of_layers, number_of_samples)
         return number_of_samples, number_of_layers
 
     def compress_audio(self, signal: np.ndarray, samples: int) -> Tuple[np.ndarray, np.ndarray]:

@@ -470,11 +470,14 @@ class XMModuleGenerator(ModuleGenerator):
 
 class ITModuleGenerator(ModuleGenerator):
     HEADER = "IMPM"
-    INSTRUMENT_HEADER = "IMPI"
-    SAMPLE_HEADER = "IMPS"
+    HEADER_INSTRUMENT = "IMPI"
+    HEADER_SAMPLE = "IMPS"
+    HEADER_EXTENSION = "XTPM"
+    HEADER_OPENMPT = "OMPT"
 
     STRUCT_HEADER_SIZE = 192
     STRUCT_INSTRUMENT_SIZE = 554
+    STRUCT_INSTRUMENT_EXTENSION = 120
     STRUCT_SAMPLE_SIZE = 80
     STRUCT_PATTERN_SIZE = 8
 
@@ -512,7 +515,10 @@ class ITModuleGenerator(ModuleGenerator):
         return self.calculate_header_size()
 
     def calculate_samples_offset(self) -> int:
-        return self.calculate_instruments_offset() + self.instruments * self.STRUCT_INSTRUMENT_SIZE
+        extended_instruments = max(0, self.instruments + 1 - 256 // self.samples_per_instrument)
+        base_offset = self.calculate_instruments_offset() + self.instruments * self.STRUCT_INSTRUMENT_SIZE
+        offset = base_offset + extended_instruments * self.STRUCT_INSTRUMENT_EXTENSION
+        return offset
 
     def calculate_patterns_offset(self) -> int:
         return self.calculate_samples_offset() + self.samples * self.STRUCT_SAMPLE_SIZE
@@ -569,7 +575,7 @@ class ITModuleGenerator(ModuleGenerator):
         return struct.pack("<I", 0x0000)
 
     def get_reserved(self) -> bytes:
-        return struct.pack("<I", 0x0000)
+        return self.HEADER_OPENMPT.encode()
 
     def get_initial_channel_pan(self) -> bytes:
         return struct.pack("<64B", *(0x20,) * 64)
@@ -582,10 +588,14 @@ class ITModuleGenerator(ModuleGenerator):
 
     def get_instrument_offsets(self) -> bytes:
         base_offset = self.calculate_instruments_offset()
-        offsets = [
-            base_offset + instrument * self.STRUCT_INSTRUMENT_SIZE
-            for instrument in range(self.instruments)
-        ]
+        total_offset = base_offset
+
+        offsets = []
+        for instrument in range(self.instruments):
+            offsets.append(total_offset)
+            total_offset += self.STRUCT_INSTRUMENT_SIZE
+            extension = ((instrument + 1) * self.samples_per_instrument) >= 256
+            total_offset += extension * self.STRUCT_INSTRUMENT_EXTENSION
 
         return struct.pack(f"<{self.instruments}I", *offsets)
 
@@ -640,7 +650,7 @@ class ITModuleGenerator(ModuleGenerator):
         return b"".join(header)
 
     def get_instrument_header(self) -> bytes:
-        return self.INSTRUMENT_HEADER.encode()
+        return self.HEADER_INSTRUMENT.encode()
 
     def get_instrument_filename(self) -> bytes:
         return self.pad("", 12)
@@ -701,15 +711,19 @@ class ITModuleGenerator(ModuleGenerator):
         return struct.pack("B", 0xFF)
 
     def get_instrument_midi_bank(self) -> bytes:
-        return struct.pack("<H", 0xFF)
+        return struct.pack("<H", 0xFFFF)
+
+    def get_relative_note(self, note: int) -> int:
+        return min(max(1, note - self.BASE_NOTE), self.samples_per_instrument)
 
     def get_instrument_note_sample_keyboard_table(self, instrument: int) -> bytes:
         table = []
         sample_offset = instrument * self.samples_per_instrument
         for note in range(120):
             table.append(note)
-            offset = min(max(1, note - self.BASE_NOTE), self.samples_per_instrument)
-            table.append(sample_offset + offset)
+            offset = self.get_relative_note(note)
+            offset = (sample_offset + offset) % 256
+            table.append(offset)
 
         return bytes(table)
 
@@ -743,7 +757,27 @@ class ITModuleGenerator(ModuleGenerator):
     def get_envelope_trailing_byte(self) -> bytes:
         return struct.pack("<1B", 0x00)
 
-    def get_envelope_trailing_bytes(self) -> bytes:
+    def get_instrument_extension(self, instrument: int) -> bytes:
+        base_sample = instrument * self.samples_per_instrument
+        extension = []
+        for note in range(120):
+            note = self.get_relative_note(note)
+            sample = base_sample + note
+            page = sample // 256
+            extension.append(page)
+
+        return struct.pack(f"<{self.STRUCT_INSTRUMENT_EXTENSION}B", *extension)
+
+    def get_envelope_trailing_bytes(self, instrument: int) -> bytes:
+        sample = (instrument + 1) * self.samples_per_instrument
+        if sample >= 256:
+            trailing_bytes = [
+                self.HEADER_EXTENSION.encode(),
+                self.get_instrument_extension(instrument),
+            ]
+
+            return b"".join(trailing_bytes)
+
         return struct.pack("<4B", *(0x00,) * 4)
 
     def get_volume_envelope(self) -> bytes:
@@ -781,7 +815,7 @@ class ITModuleGenerator(ModuleGenerator):
     def get_panning_and_pitch_nodes(self) -> bytes:
         return struct.pack(
             "<75B",
-            0x00, 0x01, 0x00,
+            0x00, 0x00, 0x00,
             0x00, 0x02, 0x00,
             *(0x00, 0x00, 0x00) * 23
         )
@@ -800,12 +834,12 @@ class ITModuleGenerator(ModuleGenerator):
 
         return b"".join(panning_and_pitch_envelope)
 
-    def get_instrument_envelopes(self) -> bytes:
+    def get_instrument_envelopes(self, instrument: int) -> bytes:
         return b"".join([
             self.get_volume_envelope(),
             self.get_panning_and_pitch_envelope(),
             self.get_panning_and_pitch_envelope(),
-            self.get_envelope_trailing_bytes()
+            self.get_envelope_trailing_bytes(instrument)
         ])
 
     def get_instrument(self, instrument: int) -> bytes:
@@ -833,7 +867,7 @@ class ITModuleGenerator(ModuleGenerator):
             self.get_instrument_midi_program(),
             self.get_instrument_midi_bank(),
             self.get_instrument_note_sample_keyboard_table(instrument),
-            self.get_instrument_envelopes()
+            self.get_instrument_envelopes(instrument)
         ]
 
         return b"".join(instrument_data)
@@ -845,7 +879,7 @@ class ITModuleGenerator(ModuleGenerator):
         )
 
     def get_sample_header(self) -> bytes:
-        return self.SAMPLE_HEADER.encode()
+        return self.HEADER_SAMPLE.encode()
 
     def get_sample_filename(self) -> bytes:
         return self.pad("", 12)
@@ -963,7 +997,6 @@ class ITModuleGenerator(ModuleGenerator):
         channels = []
         previous_mask = [0] * self.channels
 
-        last_instrument = [0] * self.channels
         last_command = [0] * self.channels
         last_command_value = [0] * self.channels
 
@@ -986,9 +1019,8 @@ class ITModuleGenerator(ModuleGenerator):
 
                 if note != 0xFF:
                     mask_variable |= 0x05
-                if instrument != last_instrument[channel]:
+                if instrument != 0x00:
                     mask_variable |= 0x02
-                    last_instrument[channel] = instrument
                 if effect != last_command[channel] or (effect != 0 and last_command_value[channel] != effect & 0xFF):
                     mask_variable |= 0x08
                     last_command[channel] = effect >> 8
