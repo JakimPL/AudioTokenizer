@@ -1,6 +1,6 @@
 import os
-from typing import List, Tuple
 import warnings
+from typing import List, Optional, Tuple
 
 import numpy as np
 import scipy.io.wavfile as wav
@@ -12,10 +12,12 @@ class AudioCompressor:
     def __init__(
             self,
             unit_length: int,
-            volume_resolution: int,
+            return_reconstruction: bool = False,
             channels_per_layer: int = 1,
+            volume_resolution: int = 64,
             increase_volume_resolution: bool = True,
-            min_instrument_volume_envelope: int = 4,
+            min_instrument_volume_envelope: int = 1,
+            remove_sample_slope: bool = True,
             samples_per_instrument: int = 1,
             amplification: float = 1.0
     ):
@@ -23,10 +25,13 @@ class AudioCompressor:
         self.volume_resolution: int = volume_resolution
         self.factor: int = round(np.sqrt(volume_resolution))
 
+        self.return_reconstruction: bool = return_reconstruction
+
         self.increase_volume_resolution: bool = increase_volume_resolution
         self.min_instrument_volume_envelope: int = min_instrument_volume_envelope
         self.channels_per_layer: int = channels_per_layer
 
+        self.remove_sample_slope: bool = remove_sample_slope
         self.samples_per_instrument: int = samples_per_instrument
         self.sample_copies: int = 4 if increase_volume_resolution else 2
         self.instrument_size: int = samples_per_instrument * self.sample_copies
@@ -38,7 +43,7 @@ class AudioCompressor:
             input_paths: List[os.PathLike],
             layers_per_signal: List[int],
             samples_per_signal: List[int]
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray]]:
         offset = 0
         samples, amplitudes, patterns = [], [], []
         for input_path, number_of_layers, number_of_samples in zip(input_paths, layers_per_signal, samples_per_signal):
@@ -48,8 +53,13 @@ class AudioCompressor:
             sample_data, volume_data = self.compress_audio(signal, number_of_samples)
             number_of_samples, number_of_layers = self.get_updated_sizes(sample_data, number_of_layers)
 
+            instruments = number_of_samples // self.samples_per_instrument
+            if instruments >= 256:
+                raise ValueError(f"The number of instruments ({instruments}) is more than 255 allowed.")
+
             sample_data, volume_data, amplitude_data = self.normalize_audio(sample_data, volume_data)
-            energy_data = amplitude_data * np.sum(sample_data ** 2, axis=1)
+            sample_data_energy = np.sum((sample_data - sample_data.mean(axis=1)[:, np.newaxis]) ** 2, axis=1)
+            energy_data = amplitude_data * sample_data_energy
 
             sample_data = self.prepare_sample_data(sample_data)
             pattern_data = self.prepare_pattern_data(volume_data, number_of_samples, offset)
@@ -66,7 +76,29 @@ class AudioCompressor:
         amplitude_data = np.hstack(amplitudes)
         pattern_data = np.vstack(patterns)
 
-        return sample_data, amplitude_data, pattern_data
+        reconstruction = None
+        if self.return_reconstruction:
+            reconstruction = self.reconstruct_audio(sample_data, amplitude_data, pattern_data)
+
+        return sample_data, amplitude_data, pattern_data, reconstruction
+
+    def reconstruct_audio(self, sample_data: np.ndarray, amplitude_data: np.ndarray, pattern_data: np.ndarray) -> np.ndarray:
+        amplitude_data = amplitude_data.repeat(self.instrument_size) / self.volume_resolution
+        sample_data = (sample_data * 16383.5).astype("int16") * amplitude_data[:, np.newaxis]
+
+        samples = pattern_data[:, :, 1] - 1
+        volumes = pattern_data[:, :, 0]
+        mask = samples < 0
+
+        reconstruction = np.zeros((samples.shape[0], samples.shape[1], self.unit_length), dtype="float")
+        valid_mask = ~mask
+        reconstruction[valid_mask] = (
+                (volumes[valid_mask] / self.volume_resolution)[:, np.newaxis] *
+                sample_data[samples[valid_mask]]
+        )
+
+        channel_reconstructions = reconstruction.reshape(reconstruction.shape[0], -1)
+        return np.round(channel_reconstructions.sum(axis=0)) / 16383.5
 
     @staticmethod
     def find_approximation(signal_matrix: np.ndarray, samples: int) -> Tuple[np.ndarray, np.ndarray]:
@@ -104,13 +136,26 @@ class AudioCompressor:
         number_of_layers = min(120, number_of_layers, number_of_samples)
         return number_of_samples, number_of_layers
 
+    def remove_slope(self, signal_matrix: np.ndarray) -> np.ndarray:
+        x = np.arange(self.unit_length)
+        intercept = signal_matrix[:, 0]
+        slope = (signal_matrix[:, -1] - intercept) / (self.unit_length - 1)
+        trend = slope * x[:, np.newaxis] + intercept
+        return signal_matrix - trend.T
+
+    def reduce_signal(self, signal_matrix: np.ndarray, samples: int) -> Tuple[np.ndarray, np.ndarray]:
+        if self.remove_sample_slope:
+            signal_matrix = self.remove_slope(signal_matrix)
+
+        return self.find_approximation(signal_matrix, samples)
+
     def compress_audio(self, signal: np.ndarray, samples: int) -> Tuple[np.ndarray, np.ndarray]:
         length = len(signal)
         new_length = self.unit_length * ((length + self.unit_length - 1) // self.unit_length)
         padded_signal = pad(int16_to_float(signal), new_length)
         signal_matrix = padded_signal.reshape(-1, self.unit_length)
         samples = self.recalculate_number_of_samples(signal_matrix.shape[0], samples)
-        return self.find_approximation(signal_matrix, samples)
+        return self.reduce_signal(signal_matrix, samples)
 
     def prepare_amplitude_data(self, sample_data: np.ndarray) -> np.ndarray:
         amplitude_data = np.abs(sample_data).max(axis=1)[:, np.newaxis]

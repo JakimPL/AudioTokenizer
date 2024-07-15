@@ -1,13 +1,19 @@
 {
-    "unit_length": 441,
-    "layers": 32,
-    "samples": 32,
-    "channels_per_layer": 1,
-    "volume_resolution": 64,
-    "increase_volume_resolution": false,
-    "samples_per_instrument": 4,
-    "min_instrument_volume_envelope": 8,
-    "loop_samples": true,
-    "amplification": 1.0,
-    "max_rows": 64
+    "compressor": {
+        "unit_length": 441,
+        "layers": 32,
+        "samples": 32,
+        "remove_sample_slope": true,
+        "return_reconstruction": true
+    },
+    "module": {
+        "max_rows": 64,
+        "channels_per_layer": 1,
+        "volume_resolution": 64,
+        "increase_volume_resolution": true,
+        "samples_per_instrument": 8,
+        "min_instrument_volume_envelope": 32,
+        "loop_samples": true,
+        "amplification": 1.0
+    }
 }

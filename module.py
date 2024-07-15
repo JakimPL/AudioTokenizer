@@ -73,10 +73,6 @@ class ModuleGenerator:
         instruments = self.samples / self.samples_per_instrument
         return int(np.ceil(instruments))
 
-    def calculate_bpm(self) -> int:
-        bpm = round(110250 / self.sample_length)
-        return int(np.clip(bpm, 32, 511))
-
     def generate_instruments_map(self) -> Dict[int, Tuple[int, int]]:
         instrument = 1
         note = C_NOTE
@@ -139,6 +135,10 @@ class XMModuleGenerator(ModuleGenerator):
 
     def calculate_number_of_channels(self) -> int:
         return self.pattern_data.shape[0]
+
+    def calculate_bpm(self) -> int:
+        bpm = round(110250 / self.sample_length)
+        return int(np.clip(bpm, 32, 511))
 
     def calculate_number_of_rows(self, max_rows: int) -> int:
         rows = int(65535 / (self.channels * 5))
@@ -508,6 +508,10 @@ class ITModuleGenerator(ModuleGenerator):
     def calculate_number_of_rows(self, max_rows: int) -> int:
         return int(np.clip(max_rows, 32, 200))
 
+    def calculate_bpm(self) -> int:
+        bpm = round(110250 / self.sample_length)
+        return int(np.clip(bpm, 32, 255))
+
     def calculate_header_size(self) -> int:
         return self.STRUCT_HEADER_SIZE + self.patterns * 5 + self.instruments * 4 + self.samples * 4
 
@@ -659,7 +663,7 @@ class ITModuleGenerator(ModuleGenerator):
         return struct.pack("B", 0)
 
     def get_instrument_new_note_action(self) -> bytes:
-        return struct.pack("B", 0x01)
+        return struct.pack("B", self.loop_samples * 3)
 
     def get_instrument_duplicate_check_type(self) -> bytes:
         return struct.pack("B", 0x00)
@@ -668,7 +672,7 @@ class ITModuleGenerator(ModuleGenerator):
         return struct.pack("B", 0x02)
 
     def get_instrument_fadeout(self) -> bytes:
-        return struct.pack("<H", 0x00)
+        return struct.pack("<H", 0x80)
 
     def get_instrument_pitch_pan_separation(self) -> bytes:
         return struct.pack("B", 0x00)
@@ -750,8 +754,7 @@ class ITModuleGenerator(ModuleGenerator):
             "<75B",
             0x40, 0x00, 0x00,
             0x40, 0x01, 0x00,
-            0x00, 0x03, 0x00,
-            *(0x00, 0x00, 0x00) * 22,
+            *(0x00, 0x00, 0x00) * 23,
         )
 
     def get_envelope_trailing_byte(self) -> bytes:

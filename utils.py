@@ -1,11 +1,22 @@
+import os
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 from IPython.display import Audio, display
+from scipy.io import wavfile
+
+SAMPLING_RATE = 44100
 
 
-def play_sample(sample: np.ndarray, rate=44100):
+def play_sample(sample: np.ndarray, rate: int = SAMPLING_RATE):
     display(Audio(sample, rate=rate))
+
+
+def save_sample(sample: np.ndarray, path: os.PathLike, rate: int = SAMPLING_RATE):
+    reconstruction_path = Path(path).with_suffix(".wav")
+    reconstruction_path.parent.mkdir(parents=True, exist_ok=True)
+    wavfile.write(reconstruction_path, rate, sample)
 
 
 def float_to_int16(signal: np.ndarray) -> np.ndarray:
@@ -34,3 +45,11 @@ def convert_to_mono(signal: np.ndarray) -> np.ndarray:
         signal = signal.mean(axis=1)
 
     return signal
+
+
+def infer_module_format(path: Path) -> str:
+    module_format = path.suffix[1:].lower()
+    if module_format not in ["xm", "it"]:
+        raise ValueError(f"Unsupported module format: {module_format}. The supported formats are XM and IT.")
+
+    return module_format
