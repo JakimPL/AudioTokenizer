@@ -1,6 +1,6 @@
 import os
 import warnings
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import scipy.io.wavfile as wav
@@ -58,9 +58,8 @@ class AudioCompressor:
                 raise ValueError(f"The number of instruments ({instruments}) is more than 255 allowed.")
 
             sample_data, volume_data, amplitude_data = self.normalize_audio(sample_data, volume_data)
-            sample_data_energy = np.sum((sample_data - sample_data.mean(axis=1)[:, np.newaxis]) ** 2, axis=1)
-            energy_data = amplitude_data * sample_data_energy
 
+            energy_data = self.prepare_energy_data(sample_data, amplitude_data)
             sample_data = self.prepare_sample_data(sample_data)
             pattern_data = self.prepare_pattern_data(volume_data, number_of_samples, offset)
             pattern_data = self.compress_pattern_data(pattern_data, energy_data, number_of_layers)
@@ -78,7 +77,10 @@ class AudioCompressor:
 
         reconstruction = None
         if self.return_reconstruction:
-            reconstruction = self.reconstruct_audio(sample_data, amplitude_data, pattern_data)
+            if self.channels_per_layer > 1:
+                warnings.warn("Warning: Reconstruction is not supported for the number of channels per layer greater than 1.")
+            else:
+                reconstruction = self.reconstruct_audio(sample_data, amplitude_data, pattern_data)
 
         return sample_data, amplitude_data, pattern_data, reconstruction
 
@@ -111,8 +113,13 @@ class AudioCompressor:
 
         return approximation, alphas
 
-    def divide_by_channels(self, array: np.ndarray, layers: int) -> np.ndarray:
-        array = array.T.reshape(-1, self.channels_per_layer, layers).T
+    def divide_by_channels(self, array: np.ndarray, layers: int, fill_value: Union[int, float] = 0) -> np.ndarray:
+        length = array.shape[-1]
+        new_length = int(np.ceil(length / self.channels_per_layer)) * self.channels_per_layer
+        new_array = np.full((array.shape[0], new_length), fill_value)
+        new_array[:, :length] = array
+
+        array = new_array.T.reshape(-1, self.channels_per_layer, layers).T
         return array.reshape(layers * self.channels_per_layer, -1)
 
     def recalculate_number_of_samples(self, real_size: int, samples: int) -> int:
@@ -130,10 +137,9 @@ class AudioCompressor:
 
         return new_samples
 
-    @staticmethod
-    def get_updated_sizes(sample_data: np.ndarray, number_of_layers: int) -> Tuple[int, int]:
+    def get_updated_sizes(self, sample_data: np.ndarray, number_of_layers: int) -> Tuple[int, int]:
         number_of_samples = sample_data.shape[0]
-        number_of_layers = min(120, number_of_layers, number_of_samples)
+        number_of_layers = min(120, number_of_layers, number_of_samples * self.channels_per_layer)
         return number_of_samples, number_of_layers
 
     def remove_slope(self, signal_matrix: np.ndarray) -> np.ndarray:
@@ -193,6 +199,11 @@ class AudioCompressor:
 
         return sample_data, volume_data, amplitude_data
 
+    @staticmethod
+    def prepare_energy_data(sample_data: np.ndarray, amplitude_data: np.ndarray) -> np.ndarray:
+        sample_data_energy = np.sum((sample_data - sample_data.mean(axis=1)[:, np.newaxis]) ** 2, axis=1)
+        return amplitude_data * sample_data_energy
+
     def prepare_sample_data(self, sample_data: np.ndarray) -> np.ndarray:
         samples = [sample_data, -sample_data]
         if self.increase_volume_resolution:
@@ -203,31 +214,37 @@ class AudioCompressor:
         sample_data = np.stack(samples).transpose((1, 0, 2))
         return sample_data.reshape(number_of_samples, -1)
 
-    @staticmethod
-    def compress_pattern_data(pattern_data: np.ndarray, energy_data: np.ndarray, max_channels: int) -> np.ndarray:
+    def compress_pattern_data(self, pattern_data: np.ndarray, energy_data: np.ndarray, max_channels: int) -> np.ndarray:
         lines = []
         max_length = 0
         for index in range(pattern_data.shape[1]):
             line = pattern_data[:, index]
 
             volumes = line[:, 0]
-            energies = volumes * energy_data
+            energies = volumes * np.repeat(energy_data, self.channels_per_layer)
+            energies = energies.reshape(-1, self.channels_per_layer).T
+            volumes = volumes.reshape(-1, self.channels_per_layer).T
 
-            positive_indices = np.where(volumes > 0)[0]
-            filtered_line = line[positive_indices]
-            filtered_energies = energies[positive_indices]
-            top_indices = np.argsort(-filtered_energies)[:max_channels]
-            top_filtered_line = filtered_line[top_indices]
+            length = 0
+            top_filtered_line = []
+            for subline in range(self.channels_per_layer):
+                positive_indices = np.where(volumes[subline] > 0)[0]
+                filtered_line = line[positive_indices * self.channels_per_layer + subline]
+                filtered_energies = energies[subline][positive_indices]
+                top_indices = np.argsort(-filtered_energies)[:max_channels]
+                top_filtered_line.extend(filtered_line[top_indices])
+                length += len(top_indices)
 
-            max_length = max(max_length, len(top_indices))
-            lines.append(top_filtered_line)
+            max_length = max(max_length, length)
+            lines.append(np.array(top_filtered_line))
 
         constant_item = np.array([[-1, -1, -1]])
         final_lines = []
         for line in lines:
             constant_items = max_length - len(line)
             padding_array = np.tile(constant_item, (constant_items, 1))
-            final_lines.append(np.vstack([line, padding_array]))
+            final_line = np.vstack([line, padding_array]) if len(line) else padding_array
+            final_lines.append(final_line)
 
         return np.stack(final_lines).transpose((1, 0, 2))
 
@@ -239,7 +256,7 @@ class AudioCompressor:
     def prepare_instruments_data(self, length: int, layers: int) -> np.ndarray:
         instruments_data = np.arange(0, layers) + 1
         instruments_data = np.tile(instruments_data, (length, 1)).T
-        return self.divide_by_channels(instruments_data, layers)
+        return self.divide_by_channels(instruments_data, layers, fill_value=0)
 
     def double_pattern_data(self, instruments_data: np.ndarray, volume_data: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         if self.increase_volume_resolution:
@@ -261,7 +278,7 @@ class AudioCompressor:
 
     def prepare_pattern_data(self, volume_data: np.ndarray, layers, offset: int) -> np.ndarray:
         length = volume_data.shape[1]
-        volume_data = self.divide_by_channels(volume_data, layers)
+        volume_data = self.divide_by_channels(volume_data, layers, fill_value=0.0)
         instruments_data = self.prepare_instruments_data(length, layers)
         delay_data = self.prepare_delay_data(length, layers)
 

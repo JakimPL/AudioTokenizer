@@ -269,7 +269,7 @@ class XMModuleGenerator(ModuleGenerator):
                     if sample > 0:
                         instrument, note = self.instruments_map[sample]
 
-                if delay == -1:
+                if delay == -1 or instrument == -1:
                     lines.append(struct.pack("B", 0x80))
                     size += 1
                 elif delay == 0:
@@ -497,7 +497,9 @@ class ITModuleGenerator(ModuleGenerator):
     STRUCT_SAMPLE_SIZE = 80
     STRUCT_PATTERN_SIZE = 8
 
+    RELATIVE_NOTE = 0x0B
     BASE_NOTE = 0x23
+    BASE_FREQUENCY = 176400
 
     def __init__(
             self,
@@ -946,7 +948,7 @@ class ITModuleGenerator(ModuleGenerator):
 
     def get_sample_c5_speed(self, sample: int) -> bytes:
         sample_index = sample % self.samples_per_instrument
-        frequency = round(176400 * np.power(2.0 ** (-sample_index), 1 / 12))
+        frequency = round(self.BASE_FREQUENCY * np.power(2.0 ** (-sample_index), 1 / 12))
         return struct.pack("<I", frequency)
 
     def get_sample_sustain_start(self) -> bytes:
@@ -1021,9 +1023,6 @@ class ITModuleGenerator(ModuleGenerator):
         channels = []
         previous_mask = [0] * self.channels
 
-        last_command = [0] * self.channels
-        last_command_value = [0] * self.channels
-
         for line in range(self.rows):
             for channel in range(self.channels):
                 x = offset + line
@@ -1036,19 +1035,17 @@ class ITModuleGenerator(ModuleGenerator):
                     if sample > 0:
                         instrument, note = self.instruments_map[sample]
 
-                note = note + 11 if instrument else 0xFF
+                note = note + self.RELATIVE_NOTE if instrument else 0xFF
                 volume = volume if volume >= 0 else 0x00
-                mask_variable = 0
-                effect = 0
+                effect = 0x13D0 + delay if delay > 0 else 0x00
 
+                mask_variable = 0
                 if note != 0xFF:
                     mask_variable |= 0x05
                 if instrument != 0x00:
                     mask_variable |= 0x02
-                if effect != last_command[channel] or (effect != 0 and last_command_value[channel] != effect & 0xFF):
+                if effect != 0x00:
                     mask_variable |= 0x08
-                    last_command[channel] = effect >> 8
-                    last_command_value[channel] = effect & 0xFF
 
                 channel_marker = channel + 1
                 if mask_variable != previous_mask[channel]:
