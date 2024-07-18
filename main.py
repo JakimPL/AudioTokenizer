@@ -49,14 +49,14 @@ if __name__ == "__main__":
 
     audio_compressor = AudioCompressor(
         unit_length=unit_length,
-        return_reconstruction=RETURN_RECONSTRUCTION,
         channels_per_layer=CHANNELS_PER_LAYER,
         volume_resolution=VOLUME_RESOLUTION,
         increase_volume_resolution=INCREASE_VOLUME_RESOLUTION,
         min_instrument_volume_envelope=MIN_INSTRUMENT_VOLUME_ENVELOPE,
         remove_sample_slope=REMOVE_SAMPLE_SLOPE,
         samples_per_instrument=SAMPLES_PER_INSTRUMENT,
-        amplification=amplification
+        amplification=amplification,
+        return_reconstruction=RETURN_RECONSTRUCTION
     )
 
     sample_data, amplitude_data, pattern_data, reconstruction = audio_compressor(

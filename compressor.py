@@ -12,14 +12,14 @@ class AudioCompressor:
     def __init__(
             self,
             unit_length: int,
-            return_reconstruction: bool = False,
             channels_per_layer: int = 1,
             volume_resolution: int = 64,
             increase_volume_resolution: bool = True,
             min_instrument_volume_envelope: int = 1,
             remove_sample_slope: bool = True,
             samples_per_instrument: int = 1,
-            amplification: float = 1.0
+            amplification: float = 1.0,
+            return_reconstruction: bool = False
     ):
         self.unit_length: int = unit_length
         self.volume_resolution: int = volume_resolution

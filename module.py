@@ -1,6 +1,6 @@
 import os
 import struct
-from typing import Dict, Tuple, List
+from typing import Dict, Tuple, List, Optional
 
 import numpy as np
 
@@ -18,7 +18,8 @@ class ModuleGenerator:
             speed: int = 16,
             samples_per_instrument: int = 16,
             loop_samples: bool = False,
-            max_rows: int = 256
+            max_rows: int = 256,
+            instrument_names: Optional[List[str]] = None
     ):
         self.title = title
         self.pattern_data = pattern_data
@@ -35,7 +36,9 @@ class ModuleGenerator:
         self.instruments = self.calculate_number_of_instruments()
         self.sample_length = self.sample_data.shape[-1]
         self.bpm = self.calculate_bpm()
+        self.used_samples = self.get_used_samples()
 
+        self.instrument_names = instrument_names or []
         self.instruments_map = self.generate_instruments_map()
 
         self.loop_samples = loop_samples
@@ -59,6 +62,9 @@ class ModuleGenerator:
     def calculate_number_of_samples(self) -> int:
         return self.sample_data.shape[0]
 
+    def calculate_bpm(self) -> int:
+        raise NotImplementedError
+
     def calculate_number_of_channels(self) -> int:
         return self.pattern_data.shape[0]
 
@@ -72,6 +78,9 @@ class ModuleGenerator:
     def calculate_number_of_instruments(self) -> int:
         instruments = self.samples / self.samples_per_instrument
         return int(np.ceil(instruments))
+
+    def get_used_samples(self) -> List[int]:
+        return sorted(np.unique(self.pattern_data[:, :, 1]) - 1)
 
     def generate_instruments_map(self) -> Dict[int, Tuple[int, int]]:
         instrument = 1
@@ -117,7 +126,8 @@ class XMModuleGenerator(ModuleGenerator):
             speed: int = 16,
             samples_per_instrument: int = 16,
             loop_samples: bool = False,
-            max_rows: int = 256
+            max_rows: int = 256,
+            instrument_names: Optional[List[str]] = None
     ):
         super().__init__(
             title,
@@ -128,6 +138,7 @@ class XMModuleGenerator(ModuleGenerator):
             samples_per_instrument,
             loop_samples,
             max_rows,
+            instrument_names
         )
 
     def calculate_number_of_samples(self) -> int:
@@ -290,7 +301,8 @@ class XMModuleGenerator(ModuleGenerator):
         return struct.pack("<4B", 0x07, 0x01, 0x00, 0x00)
 
     def get_instrument_name(self, instrument: int) -> bytes:
-        return self.pad(f"instrument{instrument + 1}", 22)
+        instrument_name = self.instrument_names[instrument] if instrument < len(self.instrument_names) else ""
+        return self.pad(instrument_name, 22)
 
     def get_instrument_type(self) -> bytes:
         return struct.pack("B", 0x00)
@@ -362,8 +374,9 @@ class XMModuleGenerator(ModuleGenerator):
     def get_reserved(self) -> bytes:
         return struct.pack("<22B", *(0x00,) * 22)
 
-    def get_sample_length(self) -> bytes:
-        return struct.pack("<I", self.sample_size * 2)
+    def get_sample_length(self, sample: int) -> bytes:
+        sample_size = self.sample_size * 2 if sample in self.used_samples else 0
+        return struct.pack("<I", sample_size)
 
     def get_sample_loop_start(self) -> bytes:
         loop_start = self.sample_length * 2 if self.loop_samples else 0
@@ -393,9 +406,12 @@ class XMModuleGenerator(ModuleGenerator):
         return struct.pack("B", 0x00)
 
     def get_sample_name(self, sample: int) -> bytes:
-        return self.pad(f"sample{sample + 1}", 22)
+        return self.pad("", 22)
 
     def get_sample_data(self, sample: int) -> bytes:
+        if sample not in self.used_samples:
+            return b""
+
         sample_data = self.sample_data[sample] * 16383.5
         if self.loop_samples:
             constant_value = sample_data[-1]
@@ -406,7 +422,7 @@ class XMModuleGenerator(ModuleGenerator):
 
     def get_sample_header(self, sample: int) -> bytes:
         return b"".join([
-            self.get_sample_length(),
+            self.get_sample_length(sample),
             self.get_sample_loop_start(),
             self.get_sample_loop_end(),
             self.get_sample_volume(),
@@ -492,7 +508,8 @@ class ITModuleGenerator(ModuleGenerator):
             speed: int = 16,
             samples_per_instrument: int = 16,
             loop_samples: bool = False,
-            max_rows: int = 256
+            max_rows: int = 256,
+            instrument_names: Optional[List[str]] = None
     ):
         super().__init__(
             title,
@@ -502,7 +519,8 @@ class ITModuleGenerator(ModuleGenerator):
             speed,
             samples_per_instrument,
             loop_samples,
-            max_rows
+            max_rows,
+            instrument_names
         )
 
     def calculate_number_of_rows(self, max_rows: int) -> int:
@@ -700,7 +718,8 @@ class ITModuleGenerator(ModuleGenerator):
         return struct.pack("B", self.samples_per_instrument)
 
     def get_instrument_name(self, instrument: int) -> bytes:
-        return self.pad(f"instrument{instrument + 1}", 26)
+        instrument_name = self.instrument_names[instrument] if instrument < len(self.instrument_names) else ""
+        return self.pad(instrument_name, 26)
 
     def get_instrument_initial_cutoff(self) -> bytes:
         return struct.pack("B", 0x00)
@@ -904,7 +923,7 @@ class ITModuleGenerator(ModuleGenerator):
         return struct.pack("B", 0x40)
 
     def get_sample_name(self, sample: int) -> bytes:
-        return self.pad(f"sample{sample + 1}", 26)
+        return self.pad("", 26)
 
     def get_sample_data_flags(self) -> bytes:
         flag = 0b00000001
@@ -913,8 +932,9 @@ class ITModuleGenerator(ModuleGenerator):
     def get_sample_default_pan(self) -> bytes:
         return struct.pack("B", 0x20)
 
-    def get_sample_length(self) -> bytes:
-        return struct.pack("<I", self.sample_size)
+    def get_sample_length(self, sample: int) -> bytes:
+        sample_size = self.sample_size if sample in self.used_samples else 0
+        return struct.pack("<I", sample_size)
 
     def get_sample_loop_start(self) -> bytes:
         loop_start = self.sample_length if self.loop_samples else 0
@@ -936,7 +956,8 @@ class ITModuleGenerator(ModuleGenerator):
         return struct.pack("<I", 0)
 
     def get_sample_pointer(self, sample: int, sample_data_offset: int) -> bytes:
-        pointer = sample_data_offset + 2 * sample * self.sample_size
+        used_samples = len([s for s in self.used_samples if 0 <= s < sample])
+        pointer = sample_data_offset + 2 * used_samples * self.sample_size
         return struct.pack("<I", pointer)
 
     def get_sample_vibrato_speed(self) -> bytes:
@@ -962,7 +983,7 @@ class ITModuleGenerator(ModuleGenerator):
             self.get_sample_name(sample),
             self.get_sample_data_flags(),
             self.get_sample_default_pan(),
-            self.get_sample_length(),
+            self.get_sample_length(sample),
             self.get_sample_loop_start(),
             self.get_sample_loop_end(),
             self.get_sample_c5_speed(sample),
@@ -1079,6 +1100,9 @@ class ITModuleGenerator(ModuleGenerator):
         sample_data_bytes = bytearray()
 
         for sample_index in range(self.samples):
+            if sample_index not in self.used_samples:
+                continue
+
             sample = np.round(self.sample_data[sample_index] * 16383.5)
             if self.loop_samples:
                 constant_value = sample[-1]

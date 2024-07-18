@@ -12,8 +12,8 @@
         "volume_resolution": 64,
         "increase_volume_resolution": true,
         "samples_per_instrument": 8,
-        "min_instrument_volume_envelope": 32,
-        "loop_samples": true,
+        "min_instrument_volume_envelope": 1,
+        "loop_samples": false,
         "amplification": 1.0
     }
 }
