@@ -3,13 +3,13 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from IPython.display import Audio, display
 from scipy.io import wavfile
 
 SAMPLING_RATE = 44100
 
 
 def play_sample(sample: np.ndarray, rate: int = SAMPLING_RATE):
+    from IPython.display import Audio, display
     display(Audio(sample, rate=rate))
 
 
