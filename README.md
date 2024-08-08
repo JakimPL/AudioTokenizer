@@ -1,4 +1,4 @@
-# _AudioTokenizer
+# _AudioTokenizer_
 
 A _FastTracker2_/_Impulse Tracker_ utility for converting 16-bit mono WAV signals (44.1 kHz) into short-length-sample approximations embedded into a tracker module. 
 
@@ -34,3 +34,7 @@ import scipy.io.wavfile as wav
 sampling_rate, signal = wav.read("audio/bass.wav")
 play_sample(signal)
 ```
+
+## Algorithm
+
+See `explanation.ipynb` for a brief explanation of the algorithm.
