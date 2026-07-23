@@ -1,0 +1,52 @@
+[project]
+name = "audiotokenizer"
+version = "0.2.0"
+description = "Approximate audio under a byte budget and compile it into an Impulse Tracker module"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "pydantic>=2.5",
+    "soundfile>=0.12",
+]
+
+
+[dependency-groups]
+dev = [
+    "black==26.5.1",
+    "isort==8.0.1",
+    "mypy==2.1.0",
+    "pre-commit==4.6.0",
+    "pylint==4.0.6",
+    "pylint-pydantic==0.4.1",
+    "pytest==9.1.1",
+    "pytest-cov==7.1.0",
+    "pytest-xdist==3.8.0",
+    "types-PyYAML==6.0.12.20260518",
+    "yamlfmt==1.1.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.scripts]
+audiotokenizer = "audiotokenizer.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["audiotokenizer*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--import-mode=importlib"
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+plugins = ["pydantic.mypy"]
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["scipy.*", "soundfile.*"]
+ignore_missing_imports = true

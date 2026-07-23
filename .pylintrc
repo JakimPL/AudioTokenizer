@@ -1,0 +1,13 @@
+[MAIN]
+fail-under=9.9
+ignore-paths=^tests/.*$
+load-plugins=pylint_pydantic
+
+[MESSAGES CONTROL]
+disable=C0104,C0114,C0115,C0116,C0302,C0415,E0402,E1101,E1130,R0801,R0901,R0902,R0903,R0904,R0911,R0912,R0913,R0914,R0917,W0613
+
+[FORMAT]
+max-line-length=120
+
+[TYPECHECK]
+ignored-modules=pydantic

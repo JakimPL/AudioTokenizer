@@ -1,0 +1,55 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        types: [text]
+
+  - repo: https://github.com/timothycrosley/isort
+    rev: 9.0.0a3
+    hooks:
+      - id: isort
+        language_version: python3
+        args: [
+          "--profile", "black",
+          "-l", "120"
+        ]
+
+  - repo: https://github.com/psf/black
+    rev: 26.5.1
+    hooks:
+      - id: black
+        language_version: python3
+        args: [
+          "--line-length", "120"
+        ]
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: uv run mypy
+        language: system
+        types: [python]
+        verbose: True
+        require_serial: true
+        exclude: ^(tests/)
+
+      - id: pylint
+        name: pylint
+        entry: uv run pylint
+        language: system
+        types: [python]
+        verbose: True
+        require_serial: true
+        exclude: ^(tests/)
+
+      - id: pytest
+        name: pytest
+        entry: make test
+        language: system
+        types:
+          - python
+        stages:
+          - pre-push
+        pass_filenames: false

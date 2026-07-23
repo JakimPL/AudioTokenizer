@@ -1,6 +1,14 @@
+__marimo__/
+__pycache__/
+__pycache__/
+.claude/
+.github/
 .idea/
 .ipynb_checkpoints/
-__pycache__/
+.mypy_cache/
+.pytest_cache/
+.venv/
+.vscode/
 
 *.pyc
 *.egg-info/
