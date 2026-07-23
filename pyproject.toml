@@ -3,14 +3,17 @@ name = "audiotokenizer"
 version = "0.2.0"
 description = "Approximate audio under a byte budget and compile it into an Impulse Tracker module"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.13,<3.14"
+authors = [{ name = "Jakim" }]
 dependencies = [
-    "numpy>=1.24",
-    "scipy>=1.10",
-    "pydantic>=2.5",
+    "numpy>=2.1",
+    "scipy>=1.13",
+    "pydantic>=2.9",
     "soundfile>=0.12",
 ]
 
+[project.scripts]
+audiotokenizer = "audiotokenizer.cli:main"
 
 [dependency-groups]
 dev = [
@@ -23,30 +26,52 @@ dev = [
     "pytest==9.1.1",
     "pytest-cov==7.1.0",
     "pytest-xdist==3.8.0",
-    "types-PyYAML==6.0.12.20260518",
-    "yamlfmt==1.1.1",
+    "xmodits-py>=0.3.5",
 ]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[project.scripts]
-audiotokenizer = "audiotokenizer.cli:main"
+[tool.hatch.build.targets.wheel]
+packages = ["audiotokenizer"]
 
-[tool.setuptools.packages.find]
-include = ["audiotokenizer*"]
+[tool.black]
+line-length = 120
+target-version = ["py313"]
+
+[tool.isort]
+profile = "black"
+line_length = 120
+known_first_party = ["audiotokenizer"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--import-mode=importlib"
 
 [tool.mypy]
+files = ["audiotokenizer"]
+exclude = ["tests"]
 python_version = "3.13"
 strict = true
 plugins = ["pydantic.mypy"]
 warn_unused_ignores = true
-
-[[tool.mypy.overrides]]
-module = ["scipy.*", "soundfile.*"]
 ignore_missing_imports = true
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+[tool.pylint.main]
+# xmodits is a compiled (Rust) extension pylint cannot introspect for member checks.
+ignored-modules = ["xmodits"]
+
+[tool.pylint."messages control"]
+disable = [
+    "missing-module-docstring",
+    "missing-class-docstring",
+    "missing-function-docstring",
+    "line-too-long",
+    "too-few-public-methods",
+]

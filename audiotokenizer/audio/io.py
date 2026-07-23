@@ -1,21 +1,21 @@
+"""Read and write audio at the codec's fixed 44100 Hz working rate, always as float64 in ``[-1, 1]``."""
+
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Final, Tuple, Union
+from typing import Final
 
 import numpy as np
 import soundfile as sf
 from numpy.typing import NDArray
 
-__all__ = ["SAMPLE_RATE", "load_audio", "save_audio", "to_mono", "normalise"]
-
 SAMPLE_RATE: Final = 44100
 
-PathLike = Union[str, Path]
+PathLike = str | Path
 
 
-def load_audio(path: PathLike, *, mono: bool = True) -> Tuple[NDArray[np.float64], int]:
-    """Read ``path`` and return ``(samples, sample_rate)`` as float64 in [-1, 1]."""
+def load_audio(path: PathLike, *, mono: bool = True) -> tuple[NDArray[np.float64], int]:
+    """Read ``path`` and return ``(samples, sample_rate)`` as float64 in ``[-1, 1]``."""
     data, sample_rate = sf.read(str(path), always_2d=True, dtype="float64")
     samples = np.asarray(data, dtype=np.float64)
     return (to_mono(samples) if mono else samples), int(sample_rate)
@@ -28,7 +28,7 @@ def save_audio(
     *,
     subtype: str = "PCM_16",
 ) -> None:
-    """Write ``samples`` (float, in [-1, 1]) to ``path`` as a WAV."""
+    """Write ``samples`` (float, in ``[-1, 1]``) to ``path`` as a WAV."""
     sf.write(str(path), np.asarray(samples, dtype=np.float64), sample_rate, subtype=subtype)
 
 

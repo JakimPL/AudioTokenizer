@@ -1,12 +1,18 @@
+"""Perceptual scorers for a reconstruction: spectral, mel-band, waveform and short-time envelope error.
+
+Envelope error is the metric that exposes attack smearing a magnitude spectrogram misses, so it rides
+alongside the spectral distances; all are gain-aligned, reporting shape agreement rather than level.
+"""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Dict, Final, Tuple
+from typing import Final
 
 import numpy as np
 from numpy.typing import NDArray
 
-from .io import SAMPLE_RATE
+from audiotokenizer.audio.io import SAMPLE_RATE
 
 __all__ = [
     "stft_magnitude",
@@ -28,7 +34,7 @@ _ENVELOPE_WINDOW: Final = 128  # 2.9 ms at 44100 Hz
 
 def _match_lengths(
     reference: NDArray[np.float64], estimate: NDArray[np.float64]
-) -> Tuple[NDArray[np.float64], NDArray[np.float64]]:
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     n = min(reference.size, estimate.size)
     return (
         np.asarray(reference, dtype=np.float64)[:n],
@@ -133,7 +139,7 @@ def _mel_filterbank(n_fft: int, sample_rate: int, n_bands: int) -> NDArray[np.fl
     return bank
 
 
-_BANK_CACHE: Dict[Tuple[int, int, int], NDArray[np.float64]] = {}
+_BANK_CACHE: dict[tuple[int, int, int], NDArray[np.float64]] = {}
 
 
 def mel_distance_db(
@@ -209,7 +215,7 @@ class Metrics:
     envelope_error_db: float
     crest_factor: float
 
-    def as_dict(self) -> Dict[str, float]:
+    def as_dict(self) -> dict[str, float]:
         return asdict(self)
 
 
