@@ -2,7 +2,8 @@
 
 ``audiotokenizer song.wav -o song.it`` compiles the signal with the default OpenMPT-capable profile and
 prints what it spent; ``--strict`` keeps the file a canonical 64-channel Impulse Tracker module. Tuning
-knobs (tempo, dictionary size, sparsity floor) are exposed so the same command drives experimentation.
+knobs (tempo, dictionary size, sparsity floor, and the ``--persistence``/``--sticky`` rate levers) are
+exposed so the same command drives experimentation.
 """
 
 from __future__ import annotations
@@ -17,6 +18,8 @@ from audiotokenizer.pipeline.config import (
     DEFAULT_BUDGET_BYTES,
     DEFAULT_MIN_ENERGY,
     DEFAULT_PCM_BITS,
+    DEFAULT_PERSISTENCE,
+    DEFAULT_POLARITY_STICKY,
     TokenizerConfig,
 )
 
@@ -32,6 +35,15 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tempo", type=int, default=_DEFAULT_TEMPO, help="IT tempo; sets the row length in frames")
     parser.add_argument("--atoms", type=int, default=_DEFAULT_ATOMS, help="dictionary size (the atom pool)")
     parser.add_argument("--min-energy", type=float, default=DEFAULT_MIN_ENERGY, help="drop projections below this")
+    parser.add_argument(
+        "--persistence", type=float, default=DEFAULT_PERSISTENCE, help="λ penalty for switching atoms (0 = off)"
+    )
+    parser.add_argument(
+        "--sticky",
+        type=int,
+        default=DEFAULT_POLARITY_STICKY,
+        help="keep polarity through sign flips at this code or less",
+    )
     parser.add_argument("--pcm-bits", type=int, choices=(8, 16), default=DEFAULT_PCM_BITS, help="stored sample depth")
     parser.add_argument("--budget", type=int, default=DEFAULT_BUDGET_BYTES, help="byte budget to report against")
     parser.add_argument("--wav", type=Path, default=None, help="also write the reconstruction as a WAV for A/B")
@@ -49,6 +61,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         tempo=args.tempo,
         n_atoms=args.atoms,
         min_energy=args.min_energy,
+        persistence=args.persistence,
+        polarity_sticky=args.sticky,
         pcm_bits=args.pcm_bits,
         budget_bytes=args.budget,
         name=args.input.stem,

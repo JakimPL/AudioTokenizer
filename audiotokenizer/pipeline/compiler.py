@@ -147,14 +147,27 @@ def _build_patterns(assignment: Assignment) -> tuple[ITPattern, ...]:
 
 
 def _reconstruct(
-    codes: NDArray[np.int64],
-    signs: NDArray[np.int64],
+    sample_no: NDArray[np.int64],
+    volume: NDArray[np.int64],
     stored: StoredAtoms,
     *,
     n_samples: int,
 ) -> NDArray[np.float64]:
-    """The signal the module reproduces: the stored atoms scaled by the volume column and their gain."""
-    weights = (signs * codes * stored.global_volume[None, :]).astype(np.float64)  # (n_blocks, n_atoms)
+    """The signal the module reproduces, read straight off the channel grids the writer emits.
+
+    Each present cell plays sample ``sample_no`` — atom ``sample_no // 2`` at ``+`` for an even slot and
+    ``−`` for an odd one — from the volume column, scaled by that atom's stored gain. Summing the channels
+    per row and tiling the blocks is exactly what the tracker mixes, so the estimate matches what a
+    polarity-sticky assignment actually plays rather than the pre-assignment coefficient signs.
+    """
+    n_blocks = int(sample_no.shape[0])
+    n_atoms = int(stored.pcm.shape[0])
+    atom_index = sample_no // 2
+    polarity = np.where(sample_no % 2 == 0, 1.0, -1.0)
+    rows, channels = np.nonzero(volume > 0)
+    contribution = polarity[rows, channels] * volume[rows, channels] * stored.global_volume[atom_index[rows, channels]]
+    weights = np.zeros((n_blocks, n_atoms), dtype=np.float64)
+    np.add.at(weights, (rows, atom_index[rows, channels]), contribution)
     blocks = stored.scale * (weights @ stored.pcm) / (MAX_VOLUME * MAX_VOLUME)
     return unframe(blocks, n_samples)
 
@@ -174,7 +187,9 @@ def compile_signal(signal: NDArray[np.float64], config: TokenizerConfig) -> Comp
     unit_atoms = LearnedDictionary().learn(matrix, config.n_atoms)
     coef = matrix @ unit_atoms.T
 
-    selection = select(coef, max_per_row=config.max_per_row, min_energy=config.min_energy)
+    selection = select(
+        coef, max_per_row=config.max_per_row, min_energy=config.min_energy, persistence=config.persistence
+    )
     quant = quantise(np.where(selection.mask, coef, 0.0))
     codes, signs, gains, unit_used = _prune_unused(quant, unit_atoms)
     n_atoms_used = int(unit_used.shape[0])
@@ -187,7 +202,7 @@ def compile_signal(signal: NDArray[np.float64], config: TokenizerConfig) -> Comp
 
     stored = store_atoms(unit_used, gains, bits=config.pcm_bits)
     n_channels = min(config.max_per_row, max(n_atoms_used, 1))
-    assignment = assign(codes, signs, n_channels=n_channels)
+    assignment = assign(codes, signs, n_channels=n_channels, sticky_threshold=config.polarity_sticky)
 
     module = ITModule(
         name=config.name,
@@ -206,7 +221,7 @@ def compile_signal(signal: NDArray[np.float64], config: TokenizerConfig) -> Comp
         pcm_frames=block_len,
         bits_per_frame=config.pcm_bits,
     )
-    estimate = _reconstruct(codes, signs, stored, n_samples=reference.size)
+    estimate = _reconstruct(assignment.sample_no, assignment.volume, stored, n_samples=reference.size)
     n_channels_used = int(np.max(np.count_nonzero(assignment.volume > 0, axis=1))) if assignment.volume.size else 0
     return CompiledModule(
         config=config,

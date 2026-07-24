@@ -40,3 +40,28 @@ def test_too_many_atoms_is_rejected() -> None:
     # 128 atoms would need 256 stored samples, over the 255 the 1-byte note map can route.
     with pytest.raises(ValueError):
         TokenizerConfig(profile="hacked", tempo=125, n_atoms=128)
+
+
+def test_polarity_sticky_saves_note_bytes_and_keeps_the_keystone(signal: NDArray[np.float64]) -> None:
+    plain = compile_signal(signal, TokenizerConfig(profile="strict", tempo=150, n_atoms=16))
+    sticky = compile_signal(signal, TokenizerConfig(profile="strict", tempo=150, n_atoms=16, polarity_sticky=4))
+    # Suppressing tiny-code sign flips can only remove note bytes, never add them.
+    assert sticky.cost.pattern <= plain.cost.pattern
+    # The size model stays byte-exact, and the estimate reflects what the sticky grids actually play.
+    assert sticky.cost.total == len(sticky.to_bytes())
+    assert np.isfinite(sticky.metrics.mel_distance_db)
+
+
+def test_persistence_keeps_the_keystone(signal: NDArray[np.float64]) -> None:
+    compiled = compile_signal(signal, TokenizerConfig(profile="strict", tempo=150, n_atoms=16, persistence=1e-3))
+    assert compiled.cost.total == len(compiled.to_bytes())
+    assert np.isfinite(compiled.metrics.mel_distance_db)
+
+
+def test_rate_levers_default_off_leave_the_reconstruction_unchanged(signal: NDArray[np.float64]) -> None:
+    base = compile_signal(signal, TokenizerConfig(profile="strict", tempo=150, n_atoms=16))
+    explicit = compile_signal(
+        signal, TokenizerConfig(profile="strict", tempo=150, n_atoms=16, persistence=0.0, polarity_sticky=0)
+    )
+    assert explicit.to_bytes() == base.to_bytes()
+    assert np.array_equal(explicit.estimate, base.estimate)

@@ -6,6 +6,12 @@ lets the packer re-use it for two bytes a row instead of re-stating it. The rule
 still-selected atom holds its channel, a dropped atom frees it, and a newly selected atom takes any free
 channel. ``sample_no`` is the 0-based atom-and-polarity slot ``2 * atom + (sign < 0)``, the second sample
 being the atom's negation, so a polarity flip re-points the cell and pays a note byte.
+
+``sticky_threshold`` recovers those flips at the margin: a channel keeping its atom holds its previous
+polarity through a sign flip whose volume code is that small or smaller, playing the wrong sign on a
+near-zero cell (negligible error) rather than paying the note byte. The reconstruction must therefore be
+read back off these grids, not the pre-assignment signs, since a sticky cell plays a sign the coefficient
+did not have.
 """
 
 from __future__ import annotations
@@ -30,8 +36,13 @@ class Assignment:
         return int(self.sample_no.shape[1])
 
 
-def assign(codes: NDArray[np.int64], signs: NDArray[np.int64], *, n_channels: int) -> Assignment:
+def assign(
+    codes: NDArray[np.int64], signs: NDArray[np.int64], *, n_channels: int, sticky_threshold: int = 0
+) -> Assignment:
     """Lay the active cells (``codes > 0``) of each block onto ``n_channels`` channels, keeping survivors put.
+
+    A channel that keeps its atom holds its previous polarity through a sign flip whose code is at or below
+    ``sticky_threshold`` (``0`` disables it), which drops the note byte the flip would otherwise cost.
 
     Raises:
         ValueError: when a block has more active atoms than there are channels.
@@ -46,6 +57,7 @@ def assign(codes: NDArray[np.int64], signs: NDArray[np.int64], *, n_channels: in
 
     channel_of_atom = [_FREE] * n_atoms
     atom_of_channel = [_FREE] * n_channels
+    polarity_of_channel = [0] * n_channels
     for row in range(n_blocks):
         selected = np.flatnonzero(active[row])
         if selected.size > n_channels:
@@ -60,12 +72,19 @@ def assign(codes: NDArray[np.int64], signs: NDArray[np.int64], *, n_channels: in
         next_free = 0
         for atom in selected.tolist():
             channel = channel_of_atom[atom]
-            if channel == _FREE:
+            held = channel != _FREE
+            if not held:
                 channel = free[next_free]
                 next_free += 1
                 channel_of_atom[atom] = channel
                 atom_of_channel[channel] = atom
-            polarity = 1 if sign_matrix[row, atom] < 0 else 0
+            code = int(code_matrix[row, atom])
+            new_polarity = 1 if sign_matrix[row, atom] < 0 else 0
+            if held and new_polarity != polarity_of_channel[channel] and code <= sticky_threshold:
+                polarity = polarity_of_channel[channel]
+            else:
+                polarity = new_polarity
+                polarity_of_channel[channel] = new_polarity
             sample_no[row, channel] = 2 * atom + polarity
-            volume[row, channel] = code_matrix[row, atom]
+            volume[row, channel] = code
     return Assignment(sample_no=sample_no, volume=volume)
