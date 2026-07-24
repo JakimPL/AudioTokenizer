@@ -58,6 +58,17 @@ def test_persistence_keeps_the_keystone(signal: NDArray[np.float64]) -> None:
     assert np.isfinite(compiled.metrics.mel_distance_db)
 
 
+def test_taper_removes_boundary_clicks_and_keeps_the_keystone(signal: NDArray[np.float64]) -> None:
+    clean = compile_signal(signal, TokenizerConfig(profile="strict", tempo=150, n_atoms=24))
+    raw = compile_signal(signal, TokenizerConfig(profile="strict", tempo=150, n_atoms=24, taper_alpha=0.0))
+    # The default taper forces every atom to silent edges, so the boundary jump collapses far below the raw
+    # codec — the artifact the spectral metrics miss, now measured.
+    assert np.isfinite(clean.metrics.click_db)
+    assert clean.metrics.click_db < raw.metrics.click_db - 6.0
+    # Atom values never enter the size model, so the byte-exact keystone still holds with the taper on.
+    assert clean.cost.total == len(clean.to_bytes())
+
+
 def test_rate_levers_default_off_leave_the_reconstruction_unchanged(signal: NDArray[np.float64]) -> None:
     base = compile_signal(signal, TokenizerConfig(profile="strict", tempo=150, n_atoms=16))
     explicit = compile_signal(

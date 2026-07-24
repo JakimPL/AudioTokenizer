@@ -31,6 +31,7 @@ PANNING_SEPARATION: Final = 128  # full stereo separation in the file header
 MIN_ROWS: Final = 32  # ITTECH: "Ranges from 32->200"
 MAX_ROWS: Final = 200
 MAX_PATTERNS: Final = 200  # order-list values 0..199 are patterns
+MAX_PATTERN_BYTES: Final = 0xFFFF  # a pattern header stores its packed row stream's length as a u16
 
 # -- tempo / speed ---------------------------------------------------------
 
@@ -55,6 +56,9 @@ CHANNELS_STORED: Final = 64  # the file header always carries 64 channel pan + 6
 #: verified by rendering a 127-channel probe module through openmpt123.
 STRICT_MAX_CHANNELS: Final = 64
 HACKED_MAX_CHANNELS: Final = 127
+
+STRICT_MAX_TEMPO: Final = 255
+HACKED_MAX_TEMPO: Final = 65535
 
 # -- header defaults -------------------------------------------------------
 

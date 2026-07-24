@@ -8,8 +8,9 @@ authors = [{ name = "Jakim" }]
 dependencies = [
     "numpy>=2.1",
     "scipy>=1.13",
-    "pydantic>=2.9",
+    "pydantic>=2.13.4",
     "soundfile>=0.12",
+    "tqdm==4.69.0",
 ]
 
 [project.scripts]
@@ -64,7 +65,6 @@ init_typed = true
 warn_required_dynamic_aliases = true
 
 [tool.pylint.main]
-# xmodits is a compiled (Rust) extension pylint cannot introspect for member checks.
 ignored-modules = ["xmodits"]
 
 [tool.pylint."messages control"]

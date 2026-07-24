@@ -30,10 +30,10 @@ from audiotokenizer.it.spec import (
     MASK_LAST_NOTE,
     MASK_NOTE,
     MASK_VOLUME,
+    MAX_PATTERN_BYTES,
     MAX_ROWS,
 )
 
-_PACKED_LENGTH_MAX = 0xFFFF  # the pattern header stores the packed byte length as a u16
 _UNSET = -1  # per-channel "no previous value yet" sentinel, reset at each pattern's first row
 
 
@@ -112,9 +112,9 @@ def pack_pattern(pattern: ITPattern) -> bytes:
             stream.append(level & 0xFF)
         stream.append(END_OF_ROW)
 
-    if len(stream) > _PACKED_LENGTH_MAX:
+    if len(stream) > MAX_PATTERN_BYTES:
         raise ValueError(
-            f"packed pattern is {len(stream)} bytes, over the {_PACKED_LENGTH_MAX}-byte u16 limit; "
+            f"packed pattern is {len(stream)} bytes, over the {MAX_PATTERN_BYTES}-byte u16 limit; "
             "use fewer rows per pattern or a longer row (larger T)"
         )
     return struct.pack("<HHI", len(stream), pattern.rows, 0) + bytes(stream)

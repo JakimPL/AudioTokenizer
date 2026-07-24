@@ -21,6 +21,7 @@ __all__ = [
     "log_spectral_distance",
     "mel_distance_db",
     "envelope_error_db",
+    "boundary_click_db",
     "crest_factor",
     "Metrics",
     "evaluate",
@@ -30,6 +31,7 @@ _LSD_FLOOR_DB: Final = 80.0
 _MEL_FLOOR_DB: Final = 80.0
 _MEL_BANDS: Final = 40
 _ENVELOPE_WINDOW: Final = 128  # 2.9 ms at 44100 Hz
+_CLICK_FLOOR_DB: Final = -120.0  # atoms tapered to exact silence leave no measurable boundary jump
 
 
 def _match_lengths(
@@ -200,6 +202,31 @@ def envelope_error_db(
     return float(np.sqrt(np.mean((ref_db - est_db) ** 2)))
 
 
+def boundary_click_db(signal: NDArray[np.float64], block_len: int) -> float:
+    """How much a block boundary jumps compared with an ordinary sample step, in dB (lower is better).
+
+    Every atom is a one-shot sample retriggered once per row, so a non-zero sample edge is an audible
+    click at every block boundary — an artifact the magnitude spectrograms above barely register because
+    it is broadband but low-energy. This takes the step across each interior boundary (``x[kT] − x[kT−1]``)
+    plus the onset and offset from silence, and reports their RMS relative to the RMS step *away* from
+    boundaries. A raw learned dictionary scores strongly positive; atoms tapered to silence at their edges
+    score strongly negative — so this is the number that exposes the gargle the spectral metrics miss.
+    """
+    flat = np.asarray(signal, dtype=np.float64).ravel()
+    if flat.size < 2 or block_len < 1:
+        return float("-inf")
+    diffs = np.diff(flat)
+    boundaries = np.arange(block_len, flat.size, block_len) - 1  # diff positions that straddle a boundary
+    steps = np.concatenate([diffs[boundaries], flat[:1], flat[-1:]])  # boundary jumps + onset + offset
+    interior = np.delete(diffs, boundaries) if boundaries.size else diffs
+    reference = float(np.sqrt(np.mean(interior**2))) if interior.size else 0.0
+    boundary_rms = float(np.sqrt(np.mean(steps**2)))
+    if reference <= 0.0:
+        return float("inf") if boundary_rms > 0.0 else _CLICK_FLOOR_DB
+    ratio = boundary_rms / reference
+    return max(20.0 * float(np.log10(ratio)), _CLICK_FLOOR_DB) if ratio > 0.0 else _CLICK_FLOOR_DB
+
+
 def crest_factor(signal: NDArray[np.float64]) -> float:
     """Peak-to-RMS ratio, which decides how much headroom a fixed-point render needs."""
     flat = np.asarray(signal, dtype=np.float64).ravel()
@@ -213,18 +240,25 @@ class Metrics:
     log_spectral_distance_db: float
     waveform_snr_db: float
     envelope_error_db: float
+    click_db: float
     crest_factor: float
 
     def as_dict(self) -> dict[str, float]:
         return asdict(self)
 
 
-def evaluate(reference: NDArray[np.float64], estimate: NDArray[np.float64]) -> Metrics:
-    """Compute every reported metric for one reconstruction."""
+def evaluate(reference: NDArray[np.float64], estimate: NDArray[np.float64], *, block_len: int | None = None) -> Metrics:
+    """Compute every reported metric for one reconstruction.
+
+    ``block_len`` is the atom length in frames; passing it scores the boundary click that the spectral
+    metrics miss. Without it (a caller that has no block grid) ``click_db`` is NaN.
+    """
+    click = boundary_click_db(estimate, block_len) if block_len is not None else float("nan")
     return Metrics(
         mel_distance_db=mel_distance_db(reference, estimate),
         log_spectral_distance_db=log_spectral_distance(reference, estimate),
         waveform_snr_db=snr_db(reference, estimate),
         envelope_error_db=envelope_error_db(reference, estimate),
+        click_db=click,
         crest_factor=crest_factor(estimate),
     )

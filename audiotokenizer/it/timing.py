@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from audiotokenizer.it.spec import MAX_SPEED, MAX_TEMPO, MIN_SPEED, MIN_TEMPO
+from audiotokenizer.it.spec import MAX_TEMPO, MIN_SPEED, MIN_TEMPO
 
 _TICK_NUMERATOR = 5  # TICK_SECONDS_NUMERATOR (2.5) as the exact fraction 5/2
 _TICK_DENOMINATOR = 2
@@ -26,21 +26,23 @@ class Timing:
     row_frames: int
 
 
-def row_frames(speed: int, tempo: int, *, frame_rate: int) -> int:
+def row_frames(speed: int, tempo: int, *, frame_rate: int, max_tempo: int = MAX_TEMPO) -> int:
     """Return the exact frames in one row, or raise when ``(speed, tempo)`` gives a fractional row.
 
     Raises:
         ValueError: when ``speed * 2.5 * frame_rate / tempo`` is not a whole number of frames, or when
             ``speed``/``tempo`` fall outside the IT ranges.
     """
-    if not MIN_SPEED <= speed <= MAX_SPEED:
-        raise ValueError(f"speed {speed} out of range {MIN_SPEED}..{MAX_SPEED}")
-    if not MIN_TEMPO <= tempo <= MAX_TEMPO:
-        raise ValueError(f"tempo {tempo} out of range {MIN_TEMPO}..{MAX_TEMPO}")
+    if not MIN_SPEED <= speed <= max_tempo:
+        raise ValueError(f"speed {speed} out of range {MIN_SPEED}..{max_tempo}")
+    if not MIN_TEMPO <= tempo <= max_tempo:
+        raise ValueError(f"tempo {tempo} out of range {MIN_TEMPO}..{max_tempo}")
+
     numerator = speed * frame_rate * _TICK_NUMERATOR
     denominator = tempo * _TICK_DENOMINATOR
     if numerator % denominator != 0:
         raise ValueError(f"speed {speed}, tempo {tempo} give a fractional row at {frame_rate} Hz")
+
     return numerator // denominator
 
 

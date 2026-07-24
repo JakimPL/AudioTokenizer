@@ -27,6 +27,7 @@ from audiotokenizer.it.spec import (
     MASK_LAST_NOTE,
     MASK_NOTE,
     MASK_VOLUME,
+    MAX_PATTERN_BYTES,
     MAX_ROWS,
     OFFSET_TABLE_ENTRY_BYTES,
     PATTERN_HEADER_BYTES,
@@ -45,6 +46,7 @@ class Cost:
     headers: int
     n_rows: int
     n_cells: int
+    max_pattern: int  # the largest single pattern's packed stream, capped by IT's u16 length field
 
     @property
     def total(self) -> int:
@@ -53,6 +55,16 @@ class Cost:
     @property
     def kilobytes(self) -> float:
         return self.total / 1024.0
+
+    @property
+    def writable(self) -> bool:
+        """Whether every pattern fits IT's u16 length field, so the module can actually be written.
+
+        A pattern denser than :data:`~audiotokenizer.it.spec.MAX_PATTERN_BYTES` cannot be serialized —
+        :func:`~audiotokenizer.it.patterns.pack_pattern` rejects it — so fitting the byte budget is not
+        enough to be a real module; the planner rejects a candidate that fails this even when it fits.
+        """
+        return self.max_pattern <= MAX_PATTERN_BYTES
 
     def bitrate_kbps(self, duration_seconds: float) -> float:
         return self.total * 8.0 / duration_seconds / 1000.0 if duration_seconds > 0 else 0.0
@@ -106,6 +118,28 @@ def pattern_bytes(sample_no: NDArray[np.int64], volume: NDArray[np.int64]) -> in
     return int(total)
 
 
+def _pcm_bytes(n_stored_samples: int, pcm_frames: int, bits_per_frame: int) -> int:
+    """The stored PCM's size: one sample body per slot, ``pcm_frames`` frames at ``bits_per_frame``."""
+    return n_stored_samples * pcm_frames * bits_per_frame // 8
+
+
+def _headers_bytes(n_stored_samples: int, n_patterns: int) -> int:
+    """The fixed record overhead: the file header, order list, offset tables and per-record headers.
+
+    One instrument routes every :data:`KEYBOARD_NOTES` sample slots, so the instrument count follows from
+    ``n_stored_samples``; the rest scale with the sample, pattern and instrument counts.
+    """
+    instruments = max(1, -(-n_stored_samples // KEYBOARD_NOTES))
+    order_bytes = n_patterns + _ORDER_TERMINATOR_BYTES
+    offset_tables = OFFSET_TABLE_ENTRY_BYTES * (instruments + n_stored_samples + n_patterns)
+    record_headers = (
+        INSTRUMENT_HEADER_BYTES * instruments
+        + SAMPLE_HEADER_BYTES * n_stored_samples
+        + PATTERN_HEADER_BYTES * n_patterns
+    )
+    return FILE_HEADER_BYTES + order_bytes + offset_tables + record_headers
+
+
 def module_bytes(
     sample_no: NDArray[np.int64],
     volume: NDArray[np.int64],
@@ -120,16 +154,39 @@ def module_bytes(
     volumes = np.asarray(volume)
     n_rows = int(samples.shape[0])
     slices = pattern_slices(n_rows, rows_per_pattern=rows_per_pattern)
-    pattern = sum(pattern_bytes(samples[start:stop], volumes[start:stop]) for start, stop in slices)
-    pcm = n_stored_samples * pcm_frames * bits_per_frame // 8
-
-    instruments = max(1, -(-n_stored_samples // KEYBOARD_NOTES))
-    patterns = max(1, len(slices))
-    order_bytes = patterns + _ORDER_TERMINATOR_BYTES
-    offset_tables = OFFSET_TABLE_ENTRY_BYTES * (instruments + n_stored_samples + patterns)
-    record_headers = (
-        INSTRUMENT_HEADER_BYTES * instruments + SAMPLE_HEADER_BYTES * n_stored_samples + PATTERN_HEADER_BYTES * patterns
-    )
-    headers = FILE_HEADER_BYTES + order_bytes + offset_tables + record_headers
+    per_pattern = [pattern_bytes(samples[start:stop], volumes[start:stop]) for start, stop in slices]
+    pcm = _pcm_bytes(n_stored_samples, pcm_frames, bits_per_frame)
+    headers = _headers_bytes(n_stored_samples, max(1, len(slices)))
     cells = int(np.count_nonzero(volumes > 0))
-    return Cost(pattern=pattern, pcm=pcm, headers=headers, n_rows=n_rows, n_cells=cells)
+    return Cost(
+        pattern=sum(per_pattern),
+        pcm=pcm,
+        headers=headers,
+        n_rows=n_rows,
+        n_cells=cells,
+        max_pattern=max(per_pattern, default=0),
+    )
+
+
+def cost_lower_bound(
+    n_rows: int,
+    n_cells: int,
+    *,
+    n_stored_samples: int,
+    pcm_frames: int,
+    bits_per_frame: int = 8,
+    rows_per_pattern: int = MAX_ROWS,
+) -> int:
+    """A cheap lower bound on the total bytes from row and cell counts alone, skipping the per-row pack.
+
+    A packed pattern spends at least a terminator per row and a marker plus a volume byte per present cell;
+    note, instrument and mask bytes only ever add to that. With the PCM and record overhead computed
+    exactly, this bounds the file below without an assignment — enough for the planner to reject a candidate
+    whose *minimum* already overruns the budget, and it can never reject a feasible one because the true
+    size is always at least this.
+    """
+    n_patterns = max(1, len(pattern_slices(n_rows, rows_per_pattern=rows_per_pattern)))
+    pattern_min = n_rows + 2 * n_cells
+    pcm = _pcm_bytes(n_stored_samples, pcm_frames, bits_per_frame)
+    headers = _headers_bytes(n_stored_samples, n_patterns)
+    return pattern_min + pcm + headers

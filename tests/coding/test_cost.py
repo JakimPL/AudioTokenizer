@@ -4,12 +4,12 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
-from audiotokenizer.coding.cost import module_bytes, pattern_bytes, pattern_slices
+from audiotokenizer.coding.cost import cost_lower_bound, module_bytes, pattern_bytes, pattern_slices
 from audiotokenizer.it.instruments import ITInstrument, fixed_c5_note_map
 from audiotokenizer.it.module import ITModule, write_it_module
 from audiotokenizer.it.patterns import ITPattern, ITPlayback, pack_pattern
 from audiotokenizer.it.samples import ITSample
-from audiotokenizer.it.spec import KEYBOARD_NOTES, PATTERN_HEADER_BYTES
+from audiotokenizer.it.spec import KEYBOARD_NOTES, MAX_PATTERN_BYTES, PATTERN_HEADER_BYTES
 
 
 def _random_grids(seed: int, n_rows: int, n_channels: int, n_atoms: int) -> tuple[NDArray[np.int64], NDArray[np.int64]]:
@@ -78,7 +78,44 @@ def test_module_bytes_equals_written_file(seed: int, n_rows: int, n_channels: in
     assert cost.total == len(write_it_module(module))
 
 
+@pytest.mark.parametrize(
+    ("seed", "n_rows", "n_channels", "n_atoms"),
+    [(1, 205, 40, 30), (2, 517, 64, 50), (3, 1000, 64, 96), (4, 33, 8, 4)],
+)
+def test_cost_lower_bound_never_exceeds_the_true_size(seed: int, n_rows: int, n_channels: int, n_atoms: int) -> None:
+    # The planner prunes candidates whose lower bound overruns the budget, so an over-estimate would
+    # silently drop a feasible config; the bound must sit at or below the exact size for every grid.
+    sample_no, volume = _random_grids(seed, n_rows, n_channels, n_atoms)
+    exact = module_bytes(sample_no, volume, n_stored_samples=2 * n_atoms, pcm_frames=8, bits_per_frame=8)
+    bound = cost_lower_bound(
+        n_rows, int(np.count_nonzero(volume > 0)), n_stored_samples=2 * n_atoms, pcm_frames=8, bits_per_frame=8
+    )
+    assert bound <= exact.total
+    # PCM and record overhead are modelled exactly, so the whole gap is the pattern stream's note/mask bytes.
+    assert exact.total - bound == exact.pattern - (n_rows + 2 * exact.n_cells)
+
+
 def test_pack_pattern_rejects_a_pattern_over_the_u16_limit() -> None:
     sample_no, volume = _random_grids(seed=9, n_rows=200, n_channels=96, n_atoms=96)
     with pytest.raises(ValueError):
         pack_pattern(ITPattern(rows=200, sample_no=sample_no, volume=volume))
+
+
+def test_max_pattern_gates_writability_in_step_with_the_writer() -> None:
+    # The same dense grid the writer refuses to pack must read as unwritable in the cost model, so the
+    # planner can reject an over-u16 candidate before it ever tries to serialize it.
+    sample_no, volume = _random_grids(seed=9, n_rows=200, n_channels=96, n_atoms=96)
+    cost = module_bytes(sample_no, volume, n_stored_samples=192, pcm_frames=8, bits_per_frame=8)
+    assert cost.max_pattern > MAX_PATTERN_BYTES
+    assert not cost.writable
+    with pytest.raises(ValueError):
+        pack_pattern(ITPattern(rows=200, sample_no=sample_no, volume=volume))
+
+
+def test_writable_holds_and_max_pattern_is_the_largest_slice_within_the_limit() -> None:
+    sample_no, volume = _random_grids(seed=2, n_rows=517, n_channels=64, n_atoms=50)
+    cost = module_bytes(sample_no, volume, n_stored_samples=100, pcm_frames=8, bits_per_frame=8)
+    assert cost.writable
+    assert cost.max_pattern == max(
+        pattern_bytes(sample_no[start:stop], volume[start:stop]) for start, stop in pattern_slices(517)
+    )

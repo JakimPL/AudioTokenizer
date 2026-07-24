@@ -17,7 +17,7 @@ from typing import Final
 import numpy as np
 from numpy.typing import NDArray
 
-from audiotokenizer.audio.framing import frame, unframe
+from audiotokenizer.audio.framing import frame, tukey_window, unframe
 from audiotokenizer.audio.io import SAMPLE_RATE, normalise, save_audio
 from audiotokenizer.audio.metrics import Metrics, evaluate
 from audiotokenizer.coding.assignment import Assignment, assign
@@ -93,6 +93,7 @@ class CompiledModule:
             f"  log-spectral  {self.metrics.log_spectral_distance_db:.2f} dB",
             f"  waveform SNR  {self.metrics.waveform_snr_db:.2f} dB",
             f"  envelope err  {self.metrics.envelope_error_db:.2f} dB",
+            f"  click ratio   {self.metrics.click_db:.1f} dB  (taper alpha {self.config.taper_alpha:.3f})",
         ]
         return "\n".join(lines)
 
@@ -172,20 +173,60 @@ def _reconstruct(
     return unframe(blocks, n_samples)
 
 
-def compile_signal(signal: NDArray[np.float64], config: TokenizerConfig) -> CompiledModule:
-    """Compile ``signal`` (mono float at 44100 Hz) into a module under ``config``.
+@dataclass(frozen=True)
+class Prepared:
+    """A timing's fixed groundwork, so a whole sweep at that timing reuses one SVD.
+
+    ``unit_atoms`` holds the dictionary in singular order and ``coef`` the block projections onto it.
+    Because the atoms are singular-ordered (Eckart-Young), truncating to the top ``n`` atoms is exactly
+    ``unit_atoms[:n]`` / ``coef[:, :n]`` — so a candidate at fewer atoms costs a slice, never a re-SVD.
+    Prepare once at the largest pool a search will consider and every smaller candidate is free.
+    """
+
+    reference: NDArray[np.float64]
+    timing: Timing
+    matrix: NDArray[np.float64]
+    unit_atoms: NDArray[np.float64]
+    coef: NDArray[np.float64]
+
+    @property
+    def n_atoms(self) -> int:
+        """How many atoms the SVD actually yielded (``≤`` the requested pool for a short signal)."""
+        return int(self.unit_atoms.shape[0])
+
+    @property
+    def n_rows(self) -> int:
+        return int(self.matrix.shape[0])
+
+
+def _prepare(reference: NDArray[np.float64], timing: Timing, n_atoms: int, *, taper_alpha: float) -> Prepared:
+    """Frame ``reference`` at ``timing`` and learn the top-``n_atoms`` dictionary and its projections.
+
+    ``taper_alpha`` cosine-tapers each frame's edges before the SVD (see :func:`~audiotokenizer.audio.
+    framing.tukey_window`). Because every tapered frame is exactly zero at its endpoints, the row space —
+    and so every learned atom — is too, which is what makes a retriggered one-shot sample click-free. One
+    elementwise multiply keeps this the same single SVD per timing the sweep relies on.
+    """
+    matrix = frame(reference, timing.row_frames) * tukey_window(timing.row_frames, taper_alpha)
+    unit_atoms = LearnedDictionary().learn(matrix, n_atoms)
+    coef = matrix @ unit_atoms.T
+    return Prepared(reference=reference, timing=timing, matrix=matrix, unit_atoms=unit_atoms, coef=coef)
+
+
+def _assemble(prepared: Prepared, config: TokenizerConfig) -> CompiledModule:
+    """Compile ``prepared`` under ``config``, slicing the shared dictionary to ``config.n_atoms``.
+
+    This is the half the CLI and the planner share: selection through assembly, with no SVD of its own.
 
     Raises:
         ValueError: when the used atom pool needs more than :data:`MAX_SAMPLES` stored samples, which the
             1-byte instrument note map cannot route.
     """
-    reference = normalise(np.asarray(signal, dtype=np.float64).ravel())
-    timing = Timing(config.speed, config.tempo, row_frames(config.speed, config.tempo, frame_rate=SAMPLE_RATE))
+    reference = prepared.reference
+    timing = prepared.timing
     block_len = timing.row_frames
-
-    matrix = frame(reference, block_len)
-    unit_atoms = LearnedDictionary().learn(matrix, config.n_atoms)
-    coef = matrix @ unit_atoms.T
+    unit_atoms = prepared.unit_atoms[: config.n_atoms]
+    coef = prepared.coef[:, : config.n_atoms]
 
     selection = select(
         coef, max_per_row=config.max_per_row, min_energy=config.min_energy, persistence=config.persistence
@@ -209,7 +250,7 @@ def compile_signal(signal: NDArray[np.float64], config: TokenizerConfig) -> Comp
         samples=_build_samples(stored, bits=config.pcm_bits),
         instruments=_build_instruments(n_slots),
         patterns=_build_patterns(assignment),
-        orders=tuple(range(len(pattern_slices(matrix.shape[0])))),
+        orders=tuple(range(len(pattern_slices(prepared.n_rows)))),
         playback=ITPlayback(
             speed=config.speed, tempo=config.tempo, global_volume=_GLOBAL_VOLUME, mix_volume=_MIX_VOLUME
         ),
@@ -228,9 +269,30 @@ def compile_signal(signal: NDArray[np.float64], config: TokenizerConfig) -> Comp
         timing=timing,
         module=module,
         cost=cost,
-        metrics=evaluate(reference, estimate),
+        metrics=evaluate(reference, estimate, block_len=block_len),
         reference=reference,
         estimate=estimate,
         n_atoms_used=n_atoms_used,
         n_channels_used=n_channels_used,
     )
+
+
+def compile_signal(signal: NDArray[np.float64], config: TokenizerConfig) -> CompiledModule:
+    """Compile ``signal`` (mono float at 44100 Hz) into a module under ``config``.
+
+    Raises:
+        ValueError: when the used atom pool needs more than :data:`MAX_SAMPLES` stored samples, which the
+            1-byte instrument note map cannot route.
+    """
+    reference = normalise(np.asarray(signal, dtype=np.float64).ravel())
+    timing = Timing(
+        config.speed,
+        config.tempo,
+        row_frames(
+            config.speed,
+            config.tempo,
+            frame_rate=SAMPLE_RATE,
+            max_tempo=config.max_tempo,
+        ),
+    )
+    return _assemble(_prepare(reference, timing, config.n_atoms, taper_alpha=config.taper_alpha), config)
