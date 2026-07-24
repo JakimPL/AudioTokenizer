@@ -1,18 +1,13 @@
 """Declarative layout of the Impulse Tracker binary records.
 
 The IT file, sample and instrument headers are fixed-size records whose fields sit at hard-coded byte
-offsets (see ITTECH.TXT). Describing that layout as *data* — an ordered list of
-:class:`Field`/:class:`ArrayField` specs per :class:`ITRecord` — keeps the on-disk structure explicit
-and in one place, so the record serializers only supply field *values* and call :meth:`ITRecord.pack`,
-never touching raw offsets. The two low-level field encoders shared across those serializers live here
-too, next to the layout they serve.
+offsets (see ITTECH.TXT). The generic layout machinery — :class:`Field`, :class:`ArrayField`,
+:class:`Record` and :func:`encode_name` — is shared across formats and lives in
+:mod:`audiotokenizer.tracker.records`; this module only supplies the IT-specific record *definitions*
+and the IT note-range guard, so the record serializers call :meth:`Record.pack` against them.
 """
 
 from __future__ import annotations
-
-import struct
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 
 from audiotokenizer.it.spec import (
     CHANNELS_STORED,
@@ -22,67 +17,18 @@ from audiotokenizer.it.spec import (
     MAX_IT_NOTE,
     SAMPLE_HEADER_BYTES,
 )
+from audiotokenizer.tracker.records import ArrayField, Field, Record, encode_name
 
-# A single field carries one struct value (an int, or a pre-padded byte block); an array field carries
-# a row per element (the keyboard note map's (play_note, sample) pairs). ``pack`` accepts both in one map.
-FieldValue = int | bytes
-ArrayValue = Sequence[Sequence[int]]
-RecordValues = Mapping[str, FieldValue | ArrayValue]
-
-
-@dataclass(frozen=True)
-class Field:
-    """One fixed field of an IT record: a :mod:`struct` value written at a byte ``offset``.
-
-    ``code`` is a ``struct`` format for a single value, e.g. ``"<I"`` (u32), ``"<H"`` (u16), ``"B"``
-    (byte) or ``"26s"`` (a fixed-length byte block, already padded/truncated by the caller).
-    """
-
-    name: str
-    offset: int
-    code: str
-
-
-@dataclass(frozen=True)
-class ArrayField:
-    """A contiguous run of ``count`` fixed-stride elements (e.g. the 120-entry keyboard note map).
-
-    ``code`` is the ``struct`` format for one element; its packed size is the stride. Each supplied
-    value is a tuple unpacked into that element (``("BB", (note, sample))`` -> two bytes per key).
-    """
-
-    name: str
-    offset: int
-    count: int
-    code: str
-
-
-@dataclass(frozen=True)
-class ITRecord:
-    """A fixed-size IT record: a byte ``size`` plus the fields and arrays laid out within it."""
-
-    size: int
-    fields: tuple[Field, ...]
-    arrays: tuple[ArrayField, ...] = ()
-
-    def pack(self, values: RecordValues) -> bytes:
-        """Serialize ``values`` into ``size`` bytes; unwritten offsets (reserved regions) stay zero."""
-        buffer = bytearray(self.size)
-        for spec in self.fields:
-            struct.pack_into(spec.code, buffer, spec.offset, values[spec.name])
-        for array in self.arrays:
-            stride = struct.calcsize(array.code)
-            rows = values[array.name]
-            assert not isinstance(rows, (int, bytes))  # array fields always carry a Sequence of element rows
-            for index, row in enumerate(rows):
-                struct.pack_into(array.code, buffer, array.offset + index * stride, *row)
-        return bytes(buffer)
-
-
-def encode_name(text: str, length: int) -> bytes:
-    """Encode ``text`` to exactly ``length`` bytes, ASCII, null-padded (over-long names truncated)."""
-    raw = text.encode("ascii", errors="replace")[:length]
-    return raw + bytes(length - len(raw))
+__all__ = [
+    "ArrayField",
+    "Field",
+    "Record",
+    "encode_name",
+    "require_it_note",
+    "FILE_HEADER",
+    "SAMPLE_HEADER",
+    "INSTRUMENT_HEADER",
+]
 
 
 def require_it_note(note: int) -> int:
@@ -92,7 +38,7 @@ def require_it_note(note: int) -> int:
     return note
 
 
-FILE_HEADER: ITRecord = ITRecord(
+FILE_HEADER: Record = Record(
     size=FILE_HEADER_BYTES,
     fields=(
         Field("magic", 0, "4s"),  # "IMPM"
@@ -115,7 +61,7 @@ FILE_HEADER: ITRecord = ITRecord(
     ),
 )
 
-SAMPLE_HEADER: ITRecord = ITRecord(
+SAMPLE_HEADER: Record = Record(
     size=SAMPLE_HEADER_BYTES,
     fields=(
         Field("magic", 0, "4s"),  # "IMPS"
@@ -132,7 +78,7 @@ SAMPLE_HEADER: ITRecord = ITRecord(
     ),
 )
 
-INSTRUMENT_HEADER: ITRecord = ITRecord(
+INSTRUMENT_HEADER: Record = Record(
     size=INSTRUMENT_HEADER_BYTES,
     fields=(
         Field("magic", 0, "4s"),  # "IMPI"
