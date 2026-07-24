@@ -133,7 +133,7 @@ def test_keymap_routes_each_slot_to_its_own_key() -> None:
     keymap = note_keymap(spec.SAMPLES_PER_INSTRUMENT)
     for slot in range(spec.SAMPLES_PER_INSTRUMENT):
         note = play_note_for(slot)
-        assert keymap[note - 1] == slot + 1  # 0-based note index -> 1-based sample
+        assert keymap[note - 1] == slot  # 0-based note index -> 0-based sample index (XM, not IT)
     assert len(keymap) == spec.KEYMAP_NOTES
 
 

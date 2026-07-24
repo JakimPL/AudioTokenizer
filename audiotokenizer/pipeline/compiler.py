@@ -207,21 +207,28 @@ def _xm_rows_per_pattern(n_rows: int) -> int:
 def _build_xm_samples(stored: StoredAtoms, *, bits: int) -> tuple[XMSample, ...]:
     """Two stored samples per atom — its positive PCM and its negation — each tuned to play native on its key.
 
-    The atom's gain rides in the sample volume byte (XM's counterpart of IT's sample global-volume), and a
-    per-sample relative-note re-tunes the key the pattern triggers back to 44100 Hz.
+    IT scales a note by *two* multiplying 0..64 lattices: the sample global-volume (the atom's static gain)
+    and the volume column (the row's coefficient). XM has no such product — its volume column *overrides* the
+    sample volume byte rather than scaling it — so a per-atom gain left in the volume byte would be erased the
+    moment the row writes its coefficient there (this is the "heavy flanger": every atom played at the row's
+    coefficient with its own amplitude discarded). The gain must therefore be baked into the PCM here
+    (``pcm × global_volume / 64``), leaving the volume byte full; the volume column then carries only the
+    coefficient, and ``pcm × (global_volume/64) × (volume_column/64)`` reproduces IT's product. The cost is
+    resolution — a quiet atom uses fewer of the stored bits — which XM's single lattice makes unavoidable.
+    :func:`_reconstruct` multiplies both factors and is the ground truth the render is checked against.
     """
     samples: list[XMSample] = []
     for index, (atom, gain_volume) in enumerate(zip(stored.pcm, stored.global_volume)):
-        volume = int(gain_volume)
+        gain = float(gain_volume) / MAX_VOLUME
         for sign, suffix in ((1.0, "+"), (-1.0, "-")):
             slot = _POLARITIES * index + (0 if sign > 0 else 1)
             play_note = play_note_for(slot % SAMPLES_PER_INSTRUMENT)
             samples.append(
                 XMSample(
                     name=f"atom{index}{suffix}",
-                    pcm=sign * atom,
+                    pcm=sign * gain * atom,
                     depth_bits=bits,
-                    volume=volume,
+                    volume=MAX_VOLUME,
                     relative_note=relative_note_for(play_note),
                 )
             )

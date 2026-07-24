@@ -5,8 +5,9 @@ differences and the player integrates them — so :func:`pcm_bytes` writes ``dif
 (with a leading absolute value, ``prepend=0``; the old writer's ``prepend=x[0]`` dropped it and shifted the
 whole sample by a DC step). And XM carries no explicit playback rate: a sample plays native only when its
 ``relative_note`` (and ``finetune``) put the triggering key on the tuning reference, so those ride in the
-header instead of IT's C5Speed. The atom's static gain rides in the sample **volume** byte, the counterpart
-of IT's sample global-volume.
+header instead of IT's C5Speed. The sample **volume** byte is *not* IT's multiplying global-volume: XM's
+volume column overrides it rather than scaling it, so the per-atom gain is baked into the PCM upstream
+(see :func:`audiotokenizer.pipeline.compiler._build_xm_samples`) and this byte is left full.
 """
 
 from __future__ import annotations
@@ -45,7 +46,7 @@ class XMSample:
     name: str
     pcm: NDArray[np.floating]  # (frames,) float in [-1, 1]
     depth_bits: int = DEFAULT_DEPTH_BITS
-    volume: int = MAX_VOLUME  # 0..64, the atom's static gain (IT's sample global-volume counterpart)
+    volume: int = MAX_VOLUME  # 0..64 default, overridden by any volume column; kept full (gain is in the PCM)
     relative_note: int = 0
     finetune: int = SAMPLE_FINETUNE
     loop: tuple[int, int] | None = None  # forward loop over half-open frame range [begin, end)
