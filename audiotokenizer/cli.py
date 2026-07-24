@@ -1,10 +1,12 @@
-"""Command-line entry point: convert a WAV into an Impulse Tracker module under a byte budget.
+"""Command-line entry point: convert a WAV into an Impulse Tracker or FastTracker 2 module.
 
 ``audiotokenizer song.wav -o song.it`` compiles the signal with the default OpenMPT-capable profile and
-prints what it spent; ``--strict`` keeps the file a canonical 64-channel Impulse Tracker module. Tuning
-knobs (tempo, dictionary size, sparsity floor, and the ``--persistence``/``--sticky`` rate levers) are
-exposed so the same command drives experimentation. ``--plan`` instead searches the config lattice for the
-best-sounding module that still fits ``--budget``, printing the cost-vs-quality frontier it settled on.
+prints what it spent; ``-o song.xm`` (or ``--format xm``) writes a FastTracker 2 module instead, whose
+16-bit tempo word reaches rows far shorter than IT's 255 ceiling allows. ``--strict`` keeps the file a
+canonical tracker module (IT 64 channels / XM 32). Tuning knobs (tempo, speed, dictionary size, sparsity
+floor, and the ``--persistence``/``--sticky`` rate levers) are exposed so the same command drives
+experimentation. ``--plan`` instead searches the config lattice for the best-sounding IT module that still
+fits ``--budget``, printing the cost-vs-quality frontier it settled on.
 """
 
 from __future__ import annotations
@@ -24,7 +26,9 @@ from audiotokenizer.pipeline.config import (
     DEFAULT_PCM_BITS,
     DEFAULT_PERSISTENCE,
     DEFAULT_POLARITY_STICKY,
+    DEFAULT_SPEED,
     DEFAULT_TAPER_ALPHA,
+    Format,
     TokenizerConfig,
 )
 from audiotokenizer.pipeline.planner import format_frontier, plan_compilation
@@ -34,16 +38,29 @@ _DEFAULT_ATOMS: Final = 88  # dense 88-channel pool fits the 2 MB budget on a ~1
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Convert a WAV into an Impulse Tracker module under a byte budget")
+    parser = argparse.ArgumentParser(description="Convert a WAV into an Impulse Tracker or FastTracker 2 module")
     parser.add_argument("input", type=Path, help="input WAV at 44100 Hz")
-    parser.add_argument("-o", "--output", type=Path, default=None, help="output .it path (default: input with .it)")
-    parser.add_argument("--strict", action="store_true", help="canonical 64-channel IT (default: 127-channel hacked)")
+    parser.add_argument(
+        "-o", "--output", type=Path, default=None, help="output path (default: input with the format suffix)"
+    )
+    parser.add_argument(
+        "--format",
+        choices=("it", "xm"),
+        default=None,
+        help="output format: it (Impulse Tracker) or xm (FastTracker 2); default inferred from -o suffix, else it",
+    )
+    parser.add_argument(
+        "--strict", action="store_true", help="canonical channel count (IT 64 / XM 32); default is hacked"
+    )
     parser.add_argument(
         "--plan",
         action="store_true",
-        help="search configs for the best quality under --budget (ignores --tempo/--atoms/--min-energy)",
+        help="search configs for the best quality under --budget (IT only; ignores --tempo/--atoms/--min-energy)",
     )
-    parser.add_argument("--tempo", type=int, default=_DEFAULT_TEMPO, help="IT tempo; sets the row length in frames")
+    parser.add_argument(
+        "--tempo", type=int, default=_DEFAULT_TEMPO, help="tempo (BPM); sets the row length. XM allows > 255"
+    )
+    parser.add_argument("--speed", type=int, default=DEFAULT_SPEED, help="ticks per row; raise to lengthen the row")
     parser.add_argument("--atoms", type=int, default=_DEFAULT_ATOMS, help="dictionary size (the atom pool)")
     parser.add_argument("--min-energy", type=float, default=DEFAULT_MIN_ENERGY, help="drop projections below this")
     parser.add_argument(
@@ -98,19 +115,33 @@ def _plan(args: argparse.Namespace, signal: NDArray[np.float64], output: Path) -
     return plan.module
 
 
+def _resolve_format(args: argparse.Namespace) -> Format:
+    """Pick the output format: an explicit ``--format``, else the ``-o`` suffix, else IT."""
+    if args.format is not None:
+        return args.format  # type: ignore[no-any-return]
+    if args.output is not None and args.output.suffix.lower() == ".xm":
+        return "xm"
+    return "it"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     signal, sample_rate = load_audio(args.input, mono=True)
     if sample_rate != SAMPLE_RATE:
         raise ValueError(f"expected {SAMPLE_RATE} Hz, got {sample_rate}")
 
-    output = args.output or args.input.with_suffix(".it")
+    module_format = _resolve_format(args)
+    output = args.output or args.input.with_suffix(f".{module_format}")
     if args.plan:
+        if module_format == "xm":
+            raise SystemExit("the --plan config search is IT-only; drop --format xm (or -o *.xm) to plan")
         compiled = _plan(args, signal, output)
     else:
         config = TokenizerConfig.load(
             profile="strict" if args.strict else "hacked",
+            format=module_format,
             tempo=args.tempo,
+            speed=args.speed,
             n_atoms=args.atoms,
             min_energy=args.min_energy,
             persistence=args.persistence,

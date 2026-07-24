@@ -24,15 +24,27 @@ from audiotokenizer.coding.assignment import Assignment, assign
 from audiotokenizer.coding.cost import Cost, module_bytes, pattern_slices
 from audiotokenizer.coding.quantisation import Quantised, StoredAtoms, quantise, store_atoms
 from audiotokenizer.coding.selection import select
+from audiotokenizer.coding.xm_cost import xm_module_bytes, xm_writable
 from audiotokenizer.dictionary.learned import LearnedDictionary
 from audiotokenizer.it.instruments import ITInstrument, fixed_c5_note_map
 from audiotokenizer.it.module import ITModule, write_it_module
 from audiotokenizer.it.patterns import ITPattern, ITPlayback
-from audiotokenizer.it.render import Interpolation, render_module
+from audiotokenizer.it.render import Interpolation
+from audiotokenizer.it.render import render_module as render_it_module
 from audiotokenizer.it.samples import ITSample
 from audiotokenizer.it.spec import KEYBOARD_NOTES, MAX_SAMPLES, MAX_VOLUME
 from audiotokenizer.it.timing import Timing, row_frames
 from audiotokenizer.pipeline.config import TokenizerConfig
+from audiotokenizer.xm.instruments import XMInstrument, play_note_for
+from audiotokenizer.xm.module import XMModule, write_xm_module
+from audiotokenizer.xm.patterns import XMPattern, XMPlayback
+from audiotokenizer.xm.render import render_module as render_xm_module
+from audiotokenizer.xm.samples import XMSample, relative_note_for
+from audiotokenizer.xm.spec import MAX_PATTERN_BYTES as XM_MAX_PATTERN_BYTES
+from audiotokenizer.xm.spec import MAX_PATTERNS as XM_MAX_PATTERNS
+from audiotokenizer.xm.spec import MAX_ROWS as XM_MAX_ROWS
+from audiotokenizer.xm.spec import MAX_SAMPLES_TOTAL as XM_MAX_SAMPLES
+from audiotokenizer.xm.spec import SAMPLES_PER_INSTRUMENT
 
 _GLOBAL_VOLUME: Final = 128
 _MIX_VOLUME: Final = 48
@@ -45,7 +57,7 @@ class CompiledModule:
 
     config: TokenizerConfig
     timing: Timing
-    module: ITModule
+    module: ITModule | XMModule
     cost: Cost
     metrics: Metrics
     reference: NDArray[np.float64]
@@ -58,10 +70,12 @@ class CompiledModule:
         return self.cost.total <= self.config.budget_bytes
 
     def to_bytes(self) -> bytes:
+        if isinstance(self.module, XMModule):
+            return write_xm_module(self.module)
         return write_it_module(self.module)
 
     def save(self, path: Path | str) -> Path:
-        """Write the ``.IT`` file and return its path."""
+        """Write the module file (``.it`` or ``.xm``) and return its path."""
         destination = Path(path)
         destination.write_bytes(self.to_bytes())
         return destination
@@ -74,13 +88,15 @@ class CompiledModule:
 
     def render(self, *, interpolation: Interpolation = "sinc") -> tuple[NDArray[np.float64], int]:
         """Render the module through ``openmpt123`` — the ground-truth playback."""
-        return render_module(self.module, sample_rate=SAMPLE_RATE, interpolation=interpolation)
+        if isinstance(self.module, XMModule):
+            return render_xm_module(self.module, sample_rate=SAMPLE_RATE, interpolation=interpolation)
+        return render_it_module(self.module, sample_rate=SAMPLE_RATE, interpolation=interpolation)
 
     def summary(self) -> str:
         duration = self.reference.size / SAMPLE_RATE
         fit = "fits" if self.within_budget else "OVER"
         lines = [
-            f"{self.config.name}  ({self.config.profile}, {duration:.1f} s)",
+            f"{self.config.name}  ({self.config.format}, {self.config.profile}, {duration:.1f} s)",
             f"  timing        speed {self.timing.speed}, tempo {self.timing.tempo}"
             f"  ->  {self.timing.row_frames} frames/row",
             f"  dictionary    {self.n_atoms_used}/{self.config.n_atoms} atoms used,"
@@ -145,6 +161,130 @@ def _build_patterns(assignment: Assignment) -> tuple[ITPattern, ...]:
         )
         for start, stop in pattern_slices(n_rows)
     )
+
+
+def _build_it(
+    config: TokenizerConfig, stored: StoredAtoms, assignment: Assignment, *, n_slots: int, block_len: int
+) -> tuple[ITModule, Cost]:
+    """Assemble the IT module and its byte-exact cost from the shared stored atoms and channel grids."""
+    n_rows = int(assignment.sample_no.shape[0])
+    module = ITModule(
+        name=config.name,
+        samples=_build_samples(stored, bits=config.pcm_bits),
+        instruments=_build_instruments(n_slots),
+        patterns=_build_patterns(assignment),
+        orders=tuple(range(len(pattern_slices(n_rows)))),
+        playback=ITPlayback(
+            speed=config.speed, tempo=config.tempo, global_volume=_GLOBAL_VOLUME, mix_volume=_MIX_VOLUME
+        ),
+    )
+    cost = module_bytes(
+        assignment.sample_no,
+        assignment.volume,
+        n_stored_samples=n_slots,
+        pcm_frames=block_len,
+        bits_per_frame=config.pcm_bits,
+    )
+    return module, cost
+
+
+def _xm_rows_per_pattern(n_rows: int) -> int:
+    """The smallest uniform pattern height that keeps the song inside XM's 256-pattern order table.
+
+    Smaller patterns pack under the u16 length more readily, so slicing at exactly the height the order
+    table forces is the most feasible choice. A song that would still need patterns taller than
+    :data:`XM_MAX_ROWS` cannot be written as XM at all — the feasibility wall IT does not have.
+    """
+    rows_per_pattern = max(1, -(-n_rows // XM_MAX_PATTERNS))
+    if rows_per_pattern > XM_MAX_ROWS:
+        raise ValueError(
+            f"{n_rows} rows need {rows_per_pattern}-row patterns, over XM's {XM_MAX_ROWS}-row limit across "
+            f"{XM_MAX_PATTERNS} patterns; use a longer row (lower tempo) or a shorter signal to export XM"
+        )
+    return rows_per_pattern
+
+
+def _build_xm_samples(stored: StoredAtoms, *, bits: int) -> tuple[XMSample, ...]:
+    """Two stored samples per atom — its positive PCM and its negation — each tuned to play native on its key.
+
+    The atom's gain rides in the sample volume byte (XM's counterpart of IT's sample global-volume), and a
+    per-sample relative-note re-tunes the key the pattern triggers back to 44100 Hz.
+    """
+    samples: list[XMSample] = []
+    for index, (atom, gain_volume) in enumerate(zip(stored.pcm, stored.global_volume)):
+        volume = int(gain_volume)
+        for sign, suffix in ((1.0, "+"), (-1.0, "-")):
+            slot = _POLARITIES * index + (0 if sign > 0 else 1)
+            play_note = play_note_for(slot % SAMPLES_PER_INSTRUMENT)
+            samples.append(
+                XMSample(
+                    name=f"atom{index}{suffix}",
+                    pcm=sign * atom,
+                    depth_bits=bits,
+                    volume=volume,
+                    relative_note=relative_note_for(play_note),
+                )
+            )
+    return tuple(samples)
+
+
+def _build_xm_instruments(n_slots: int) -> tuple[XMInstrument, ...]:
+    """One instrument per 16 sample slots (8 atoms x 2 polarities), each routing its keys to those samples."""
+    instruments: list[XMInstrument] = []
+    for start in range(0, n_slots, SAMPLES_PER_INSTRUMENT):
+        count = min(SAMPLES_PER_INSTRUMENT, n_slots - start)
+        instruments.append(XMInstrument(name=f"dict{start // SAMPLES_PER_INSTRUMENT}", n_samples=count))
+    return tuple(instruments)
+
+
+def _build_xm_patterns(assignment: Assignment, rows_per_pattern: int) -> tuple[XMPattern, ...]:
+    """Slice the channel grids into patterns of ``rows_per_pattern`` rows (chosen for feasibility)."""
+    n_rows = assignment.sample_no.shape[0]
+    return tuple(
+        XMPattern(
+            rows=stop - start,
+            sample_no=assignment.sample_no[start:stop],
+            volume=assignment.volume[start:stop],
+        )
+        for start, stop in pattern_slices(n_rows, rows_per_pattern=rows_per_pattern)
+    )
+
+
+def _build_xm(
+    config: TokenizerConfig,
+    stored: StoredAtoms,
+    assignment: Assignment,
+    *,
+    n_slots: int,
+    block_len: int,
+    n_channels: int,
+) -> tuple[XMModule, Cost]:
+    """Assemble the XM module and its byte-exact cost, enforcing the feasibility wall with a clear error."""
+    n_rows = int(assignment.sample_no.shape[0])
+    rows_per_pattern = _xm_rows_per_pattern(n_rows)
+    cost = xm_module_bytes(
+        assignment.sample_no,
+        assignment.volume,
+        n_stored_samples=n_slots,
+        pcm_frames=block_len,
+        bits_per_frame=config.pcm_bits,
+        rows_per_pattern=rows_per_pattern,
+    )
+    if not xm_writable(cost, rows_per_pattern=rows_per_pattern):
+        raise ValueError(
+            f"the densest XM pattern packs to {cost.max_pattern} bytes, over the {XM_MAX_PATTERN_BYTES}-byte "
+            f"u16 limit even at {rows_per_pattern} rows/pattern; use fewer channels or a longer row for XM"
+        )
+    module = XMModule(
+        name=config.name,
+        samples=_build_xm_samples(stored, bits=config.pcm_bits),
+        instruments=_build_xm_instruments(n_slots),
+        patterns=_build_xm_patterns(assignment, rows_per_pattern),
+        orders=tuple(range(len(pattern_slices(n_rows, rows_per_pattern=rows_per_pattern)))),
+        playback=XMPlayback(speed=config.speed, tempo=config.tempo),
+        channels=n_channels,
+    )
+    return module, cost
 
 
 def _reconstruct(
@@ -216,11 +356,14 @@ def _prepare(reference: NDArray[np.float64], timing: Timing, n_atoms: int, *, ta
 def _assemble(prepared: Prepared, config: TokenizerConfig) -> CompiledModule:
     """Compile ``prepared`` under ``config``, slicing the shared dictionary to ``config.n_atoms``.
 
-    This is the half the CLI and the planner share: selection through assembly, with no SVD of its own.
+    Everything up to the channel grids is format-agnostic — selection, quantisation, assignment and the
+    reconstruction all read the same ``(sample_no, volume)`` slots — so only the module and its byte model
+    differ: ``config.format`` picks the IT or XM builder. This is the half the CLI and the planner share,
+    with no SVD of its own.
 
     Raises:
-        ValueError: when the used atom pool needs more than :data:`MAX_SAMPLES` stored samples, which the
-            1-byte instrument note map cannot route.
+        ValueError: when the pool needs more stored samples than the format can route, or (XM only) when the
+            song trips the feasibility wall — too many patterns, or a pattern over the u16 length.
     """
     reference = prepared.reference
     timing = prepared.timing
@@ -235,33 +378,24 @@ def _assemble(prepared: Prepared, config: TokenizerConfig) -> CompiledModule:
     codes, signs, gains, unit_used = _prune_unused(quant, unit_atoms)
     n_atoms_used = int(unit_used.shape[0])
     n_slots = _POLARITIES * n_atoms_used
-    if n_slots > MAX_SAMPLES:
+    routing_limit = XM_MAX_SAMPLES if config.format == "xm" else MAX_SAMPLES
+    if n_slots > routing_limit:
         raise ValueError(
-            f"{n_atoms_used} atoms need {n_slots} stored samples, over the {MAX_SAMPLES}-sample routing "
-            f"limit; lower n_atoms to at most {MAX_SAMPLES // _POLARITIES}"
+            f"{n_atoms_used} atoms need {n_slots} stored samples, over the {config.format} routing limit of "
+            f"{routing_limit}; lower n_atoms to at most {routing_limit // _POLARITIES}"
         )
 
     stored = store_atoms(unit_used, gains, bits=config.pcm_bits)
     n_channels = min(config.max_per_row, max(n_atoms_used, 1))
     assignment = assign(codes, signs, n_channels=n_channels, sticky_threshold=config.polarity_sticky)
 
-    module = ITModule(
-        name=config.name,
-        samples=_build_samples(stored, bits=config.pcm_bits),
-        instruments=_build_instruments(n_slots),
-        patterns=_build_patterns(assignment),
-        orders=tuple(range(len(pattern_slices(prepared.n_rows)))),
-        playback=ITPlayback(
-            speed=config.speed, tempo=config.tempo, global_volume=_GLOBAL_VOLUME, mix_volume=_MIX_VOLUME
-        ),
-    )
-    cost = module_bytes(
-        assignment.sample_no,
-        assignment.volume,
-        n_stored_samples=n_slots,
-        pcm_frames=block_len,
-        bits_per_frame=config.pcm_bits,
-    )
+    module: ITModule | XMModule
+    if config.format == "xm":
+        module, cost = _build_xm(
+            config, stored, assignment, n_slots=n_slots, block_len=block_len, n_channels=n_channels
+        )
+    else:
+        module, cost = _build_it(config, stored, assignment, n_slots=n_slots, block_len=block_len)
     estimate = _reconstruct(assignment.sample_no, assignment.volume, stored, n_samples=reference.size)
     n_channels_used = int(np.max(np.count_nonzero(assignment.volume > 0, axis=1))) if assignment.volume.size else 0
     return CompiledModule(
@@ -278,11 +412,11 @@ def _assemble(prepared: Prepared, config: TokenizerConfig) -> CompiledModule:
 
 
 def compile_signal(signal: NDArray[np.float64], config: TokenizerConfig) -> CompiledModule:
-    """Compile ``signal`` (mono float at 44100 Hz) into a module under ``config``.
+    """Compile ``signal`` (mono float at 44100 Hz) into an IT or XM module under ``config.format``.
 
     Raises:
-        ValueError: when the used atom pool needs more than :data:`MAX_SAMPLES` stored samples, which the
-            1-byte instrument note map cannot route.
+        ValueError: when the pool needs more stored samples than the format can route, or (XM only) when the
+            song trips the feasibility wall — too many patterns, or a pattern over the u16 length.
     """
     reference = normalise(np.asarray(signal, dtype=np.float64).ravel())
     timing = Timing(
