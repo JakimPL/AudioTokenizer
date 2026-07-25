@@ -5,7 +5,7 @@ test:
 .PHONY: lint
 lint:
 	uv run mypy
-	uv run pylint audiotokenizer
+	uv run pylint audiotokenizer trackmod
 
 .PHONY: format
 format:

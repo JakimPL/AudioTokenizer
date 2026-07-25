@@ -35,7 +35,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["audiotokenizer"]
+packages = ["audiotokenizer", "trackmod"]
 
 [tool.black]
 line-length = 120
@@ -44,14 +44,14 @@ target-version = ["py313"]
 [tool.isort]
 profile = "black"
 line_length = 120
-known_first_party = ["audiotokenizer"]
+known_first_party = ["audiotokenizer", "trackmod"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--import-mode=importlib"
 
 [tool.mypy]
-files = ["audiotokenizer"]
+files = ["audiotokenizer", "trackmod"]
 exclude = ["tests"]
 python_version = "3.13"
 strict = true

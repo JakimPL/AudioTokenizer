@@ -67,6 +67,7 @@
 1. Avoid code comments. Comments are acceptable for tensor shapes, third-party API quirks, or non-obvious invariants.
 1. Code comments and docstrings are not for documenting changes nor progress.
 1. Write a module docstring when it explains domain or format intent — the role a module plays in the pipeline, the IT-format facts it encodes, or the contract a codec upholds. Keep it about intent and context; a docstring that merely restates the module's structure is noise.
+1. `trackmod` is the exception: it carries no module docstrings and no code comments. Class and function docstrings stay under the rules above; the domain, format and design narrative lives in [`trackmod/`](trackmod/). The library ships as its own repository, so its documentation travels as markdown alongside it.
 
 ## Tests
 

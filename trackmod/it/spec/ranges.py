@@ -1,0 +1,26 @@
+from typing import Final
+
+from trackmod.spec.width import BYTE_MAX
+
+PAN_CENTER: Final = 32
+PAN_MAX: Final = 64
+CHANNEL_VOLUME_FULL: Final = 64
+
+MAX_GLOBAL_VOLUME: Final = 128
+MAX_MIX_VOLUME: Final = 128
+
+MAX_PATTERNS: Final = 200
+CANONICAL_MAX_ORDERS: Final = 256
+
+CANONICAL_MIN_ROWS: Final = 32
+MAX_ROWS: Final = 200
+
+CANONICAL_MAX_CHANNELS: Final = 64
+EXTENDED_MAX_CHANNELS: Final = 127
+
+MIN_SPEED: Final = 1
+MAX_SPEED: Final = BYTE_MAX
+MIN_TEMPO: Final = 32
+MAX_TEMPO: Final = BYTE_MAX
+
+MAX_C5_SPEED: Final = 9_999_999

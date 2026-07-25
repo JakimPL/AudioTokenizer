@@ -1,0 +1,14 @@
+from typing import Final
+
+MIN_VOLUME: Final = 0
+MAX_VOLUME: Final = 64
+
+MIN_PANNING: Final = 0
+MAX_PANNING: Final = 255
+CENTRE_PANNING: Final = 128
+
+MIN_INSTRUMENT_VOLUME: Final = 0
+MAX_INSTRUMENT_VOLUME: Final = 128
+
+MIN_FADEOUT: Final = 0
+NO_FADEOUT: Final = 0
