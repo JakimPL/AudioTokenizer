@@ -9,10 +9,10 @@ from trackmod.core.notes.pitch import Note
 from trackmod.core.patterns.builder import PatternBuilder
 from trackmod.core.patterns.cell import Cell
 from trackmod.core.patterns.grid import Pattern
-from trackmod.it.patterns.packer import pack_cells
+from trackmod.it.patterns.packer import pack_cells, stored_instrument
 from trackmod.it.patterns.parser import unpack_cells
 from trackmod.it.patterns.sizing import packed_bytes
-from trackmod.it.spec.cells import CellMask
+from trackmod.it.spec.cells import NO_INSTRUMENT, CellMask
 from trackmod.it.spec.ranges import MAX_ROWS
 
 GRIDS = (
@@ -94,3 +94,19 @@ def test_a_column_left_out_of_a_cell_does_not_erase_what_the_channel_remembers()
 def test_a_stream_reusing_a_mask_that_was_never_stated_is_rejected() -> None:
     with pytest.raises(ValueError):
         unpack_cells(bytes([0x01, 0x00]), rows=1)
+
+
+def test_the_first_instrument_is_stored_above_the_byte_that_means_none() -> None:
+    # Zero is what a cell writes to stay on the instrument the channel already carries, so a stored
+    # instrument number starts at one — writing the shared index straight through silences the cell.
+    assert stored_instrument(0) == NO_INSTRUMENT + 1
+    builder = PatternBuilder(rows=1, channels=1)
+    builder.place(0, 0, Cell(note=Note(60), instrument=0, volume=64))
+    assert NO_INSTRUMENT not in pack_cells(builder.build())[:-1]
+
+
+def test_an_instrument_survives_a_round_trip() -> None:
+    builder = PatternBuilder(rows=1, channels=1)
+    builder.place(0, 0, Cell(note=Note(60), instrument=0, volume=64))
+    recovered = unpack_cells(pack_cells(builder.build()), rows=1)
+    assert recovered.cell(0, 0).instrument == 0

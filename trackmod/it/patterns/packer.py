@@ -3,7 +3,7 @@ from trackmod.it.layout.pattern import PATTERN_HEADER
 from trackmod.it.note import NOTE_BYTES
 from trackmod.it.patterns.encoded import EncodedCell
 from trackmod.it.patterns.memory import ChannelMemory
-from trackmod.it.spec.cells import CHANNEL_MARKER, END_OF_ROW, CellMask
+from trackmod.it.spec.cells import CHANNEL_MARKER, END_OF_ROW, INSTRUMENT_OFFSET, CellMask
 from trackmod.spec.grid import EMPTY
 from trackmod.spec.width import BYTE_MAX
 
@@ -77,6 +77,15 @@ def stored_note(value: int) -> int:
     return EMPTY if value == EMPTY else NOTE_BYTES[value]
 
 
+def stored_instrument(value: int) -> int:
+    """The instrument byte a grid instrument index stores as, leaving an absent instrument absent.
+
+    Instrument numbers are stored one above the shared numbering, because zero is what a cell writes to
+    leave the channel on the instrument it already carries.
+    """
+    return EMPTY if value == EMPTY else value + INSTRUMENT_OFFSET
+
+
 def stored_parameter(command: int, parameter: int) -> int:
     """The parameter byte a stated command carries, which is zero when the grid left it absent."""
     return 0 if command != EMPTY and parameter == EMPTY else parameter
@@ -105,7 +114,7 @@ def pack_cells(pattern: Pattern) -> bytes:
             command = int(commands[row, channel])
             encoded = encode_cell(
                 stored_note(int(notes[row, channel])),
-                int(instruments[row, channel]),
+                stored_instrument(int(instruments[row, channel])),
                 int(volumes[row, channel]),
                 command,
                 stored_parameter(command, int(parameters[row, channel])),

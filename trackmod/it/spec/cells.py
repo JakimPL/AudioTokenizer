@@ -37,3 +37,7 @@ class NoteByte(IntEnum):
     FADE = 253
     CUT = 254
     OFF = 255
+
+
+INSTRUMENT_OFFSET: Final = 1
+NO_INSTRUMENT: Final = 0

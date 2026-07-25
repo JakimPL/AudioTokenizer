@@ -7,7 +7,14 @@ from trackmod.core.patterns.grid import Pattern
 from trackmod.it.layout.pattern import PATTERN_HEADER
 from trackmod.it.note import decode_note
 from trackmod.it.patterns.memory import ChannelMemory
-from trackmod.it.spec.cells import CHANNEL_MARKER, END_OF_ROW, UNSET, CellMask
+from trackmod.it.spec.cells import (
+    CHANNEL_MARKER,
+    END_OF_ROW,
+    INSTRUMENT_OFFSET,
+    NO_INSTRUMENT,
+    UNSET,
+    CellMask,
+)
 from trackmod.spec.grid import EMPTY
 
 
@@ -67,7 +74,7 @@ def decode_cell(cursor: Cursor, memory: ChannelMemory) -> Cell:
     )
     return Cell(
         note=None if note == EMPTY else decode_note(note),
-        instrument=None if instrument == EMPTY else instrument,
+        instrument=None if instrument in (EMPTY, NO_INSTRUMENT) else instrument - INSTRUMENT_OFFSET,
         volume=None if volume == EMPTY else volume,
         effect=decode_effect(cursor, mask, memory),
     )
