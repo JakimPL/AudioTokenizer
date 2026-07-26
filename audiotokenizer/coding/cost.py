@@ -1,170 +1,73 @@
-"""The byte-exact size model of an uncompressed ``.IT`` file for an atom assignment.
+"""Budget bookkeeping: the byte figures a compilation is reported and planned against.
 
-This is the whole basis of the byte budget, and its ``pattern_bytes`` is the exact counterpart of the
-writer's :func:`audiotokenizer.it.patterns.pack_pattern`: they must agree byte-for-byte, which the
-keystone test asserts. A packed row is a list of present channels ending in a zero byte; a present cell
-costs a marker and a volume byte, a note byte only when the atom differs from that channel's previous
-present row, and a mask byte only when the cell's mask changes. Impulse Tracker resets its per-channel
-mask/note memory at each pattern boundary, so the model sums over the same 200-row pattern slices the
-writer emits. ``sample_no`` is the 0-based atom-and-polarity slot (note ``sample_no % KEYBOARD_NOTES``,
-instrument ``sample_no // KEYBOARD_NOTES``); a polarity flip re-points a cell at the ``−s`` sample, so it
-changes the note and pays a note byte.
+The exact size of a written module is ``trackmod``'s own model of it — :meth:`TrackerModule.size`, pinned
+to the writers by the keystone tests — so nothing here re-derives it. What remains is the arithmetic the
+budget is spoken in (kilobytes, kilobits per second) and one thing the module model cannot supply: a bound
+on a candidate's size *before* it is compiled.
+
+:func:`cost_lower_bound` is that bound, and it exists for the planner. Assembling a candidate costs a
+per-row assignment and a full metric pass, so the sweep needs to reject a hopeless config from cell counts
+alone. A packed Impulse Tracker pattern spends at least a terminator per row and a marker plus a volume
+byte per present cell — note, instrument and mask bytes only ever add to that — while the PCM and the
+record overhead are known exactly from the sample and pattern counts. The result therefore never exceeds
+the true size, so a candidate it rejects could not have fit, and the sweep loses nothing by trusting it.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from typing import Final
 
-import numpy as np
-from numpy.typing import NDArray
-
-from audiotokenizer.it.spec import (
+from trackmod.it.spec.orders import ORDER_TERMINATOR_BYTES
+from trackmod.it.spec.sizes import (
     FILE_HEADER_BYTES,
     INSTRUMENT_HEADER_BYTES,
-    KEYBOARD_NOTES,
-    MASK_INSTRUMENT,
-    MASK_LAST_INSTRUMENT,
-    MASK_LAST_NOTE,
-    MASK_NOTE,
-    MASK_VOLUME,
-    MAX_PATTERN_BYTES,
-    MAX_ROWS,
     OFFSET_TABLE_ENTRY_BYTES,
     PATTERN_HEADER_BYTES,
     SAMPLE_HEADER_BYTES,
 )
 
-_ORDER_TERMINATOR_BYTES = 1
+from audiotokenizer.module.it import IT_BINDING
+
+BITS_PER_BYTE: Final = 8
+BYTES_PER_KILOBYTE: Final = 1024
+BITS_PER_KILOBIT: Final = 1000
+
+DEFAULT_BITS_PER_FRAME: Final = 8
 
 
-@dataclass(frozen=True)
-class Cost:
-    """The byte breakdown of a written module: packed patterns, stored PCM, and fixed record overhead."""
-
-    pattern: int
-    pcm: int
-    headers: int
-    n_rows: int
-    n_cells: int
-    max_pattern: int  # the largest single pattern's packed stream, capped by IT's u16 length field
-
-    @property
-    def total(self) -> int:
-        return self.pattern + self.pcm + self.headers
-
-    @property
-    def kilobytes(self) -> float:
-        return self.total / 1024.0
-
-    @property
-    def writable(self) -> bool:
-        """Whether every pattern fits IT's u16 length field, so the module can actually be written.
-
-        A pattern denser than :data:`~audiotokenizer.it.spec.MAX_PATTERN_BYTES` cannot be serialized —
-        :func:`~audiotokenizer.it.patterns.pack_pattern` rejects it — so fitting the byte budget is not
-        enough to be a real module; the planner rejects a candidate that fails this even when it fits.
-        """
-        return self.max_pattern <= MAX_PATTERN_BYTES
-
-    def bitrate_kbps(self, duration_seconds: float) -> float:
-        return self.total * 8.0 / duration_seconds / 1000.0 if duration_seconds > 0 else 0.0
+def kilobytes(size_bytes: int) -> float:
+    """A byte count in kilobytes, the unit a byte budget is quoted in."""
+    return size_bytes / BYTES_PER_KILOBYTE
 
 
-def pattern_slices(n_rows: int, *, rows_per_pattern: int = MAX_ROWS) -> list[tuple[int, int]]:
-    """Split ``n_rows`` rows into the half-open ``[start, stop)`` spans of successive patterns."""
-    if n_rows <= 0:
-        return []
-    return [(start, min(start + rows_per_pattern, n_rows)) for start in range(0, n_rows, rows_per_pattern)]
-
-
-def pattern_bytes(sample_no: NDArray[np.int64], volume: NDArray[np.int64]) -> int:
-    """Bytes one packed pattern's row stream occupies (excluding its 8-byte header).
-
-    ``sample_no`` and ``volume`` are ``(n_rows, n_channels)`` for a single pattern; a cell is present
-    where ``volume > 0``. Counting runs per channel with fresh state at the pattern's first row, so it
-    stays cheap on very long patterns and matches how the writer resets memory each pattern.
-    """
-    samples = np.asarray(sample_no)
-    volumes = np.asarray(volume)
-    active = volumes > 0
-    n_rows, n_channels = samples.shape
-    note = samples % KEYBOARD_NOTES
-    instrument = samples // KEYBOARD_NOTES
-
-    total = n_rows + 2 * int(np.count_nonzero(active))  # row terminators + marker + volume per present cell
-    for channel in range(n_channels):
-        rows = np.flatnonzero(active[:, channel])
-        if rows.size == 0:
-            continue
-        channel_note = note[rows, channel]
-        channel_instrument = instrument[rows, channel]
-        note_changed = np.empty(rows.size, dtype=bool)
-        note_changed[0] = True
-        note_changed[1:] = channel_note[1:] != channel_note[:-1]
-        instrument_changed = np.empty(rows.size, dtype=bool)
-        instrument_changed[0] = True
-        instrument_changed[1:] = channel_instrument[1:] != channel_instrument[:-1]
-        total += int(note_changed.sum()) + int(instrument_changed.sum())
-
-        mask = (
-            MASK_VOLUME
-            | np.where(note_changed, MASK_NOTE, MASK_LAST_NOTE)
-            | np.where(instrument_changed, MASK_INSTRUMENT, MASK_LAST_INSTRUMENT)
-        )
-        mask_changed = np.empty(rows.size, dtype=bool)
-        mask_changed[0] = True
-        mask_changed[1:] = mask[1:] != mask[:-1]
-        total += int(mask_changed.sum())
-    return int(total)
+def bitrate_kbps(size_bytes: int, duration_seconds: float) -> float:
+    """The rate a module of this size spends on a signal of this length, zero for an empty signal."""
+    if duration_seconds <= 0:
+        return 0.0
+    return size_bytes * BITS_PER_BYTE / duration_seconds / BITS_PER_KILOBIT
 
 
 def _pcm_bytes(n_stored_samples: int, pcm_frames: int, bits_per_frame: int) -> int:
     """The stored PCM's size: one sample body per slot, ``pcm_frames`` frames at ``bits_per_frame``."""
-    return n_stored_samples * pcm_frames * bits_per_frame // 8
+    return n_stored_samples * pcm_frames * bits_per_frame // BITS_PER_BYTE
 
 
-def _headers_bytes(n_stored_samples: int, n_patterns: int) -> int:
-    """The fixed record overhead: the file header, order list, offset tables and per-record headers.
+def _record_bytes(n_stored_samples: int, n_patterns: int) -> int:
+    """The fixed overhead: the file header, the order list, the offset tables and every record header.
 
-    One instrument routes every :data:`KEYBOARD_NOTES` sample slots, so the instrument count follows from
-    ``n_stored_samples``; the rest scale with the sample, pattern and instrument counts.
+    The instrument count follows from the sample count, because one instrument routes as many stored
+    samples as this format's keymap reaches.
     """
-    instruments = max(1, -(-n_stored_samples // KEYBOARD_NOTES))
-    order_bytes = n_patterns + _ORDER_TERMINATOR_BYTES
-    offset_tables = OFFSET_TABLE_ENTRY_BYTES * (instruments + n_stored_samples + n_patterns)
-    record_headers = (
-        INSTRUMENT_HEADER_BYTES * instruments
+    n_instruments = IT_BINDING.routing.instruments(n_stored_samples)
+    offsets = OFFSET_TABLE_ENTRY_BYTES * (n_instruments + n_stored_samples + n_patterns)
+    return (
+        FILE_HEADER_BYTES
+        + n_patterns
+        + ORDER_TERMINATOR_BYTES
+        + offsets
+        + INSTRUMENT_HEADER_BYTES * n_instruments
         + SAMPLE_HEADER_BYTES * n_stored_samples
         + PATTERN_HEADER_BYTES * n_patterns
-    )
-    return FILE_HEADER_BYTES + order_bytes + offset_tables + record_headers
-
-
-def module_bytes(
-    sample_no: NDArray[np.int64],
-    volume: NDArray[np.int64],
-    *,
-    n_stored_samples: int,
-    pcm_frames: int,
-    bits_per_frame: int = 8,
-    rows_per_pattern: int = MAX_ROWS,
-) -> Cost:
-    """The whole ``.IT`` file's size for an assignment and its stored samples, byte-exact to the writer."""
-    samples = np.asarray(sample_no)
-    volumes = np.asarray(volume)
-    n_rows = int(samples.shape[0])
-    slices = pattern_slices(n_rows, rows_per_pattern=rows_per_pattern)
-    per_pattern = [pattern_bytes(samples[start:stop], volumes[start:stop]) for start, stop in slices]
-    pcm = _pcm_bytes(n_stored_samples, pcm_frames, bits_per_frame)
-    headers = _headers_bytes(n_stored_samples, max(1, len(slices)))
-    cells = int(np.count_nonzero(volumes > 0))
-    return Cost(
-        pattern=sum(per_pattern),
-        pcm=pcm,
-        headers=headers,
-        n_rows=n_rows,
-        n_cells=cells,
-        max_pattern=max(per_pattern, default=0),
     )
 
 
@@ -174,19 +77,17 @@ def cost_lower_bound(
     *,
     n_stored_samples: int,
     pcm_frames: int,
-    bits_per_frame: int = 8,
-    rows_per_pattern: int = MAX_ROWS,
+    bits_per_frame: int = DEFAULT_BITS_PER_FRAME,
 ) -> int:
-    """A cheap lower bound on the total bytes from row and cell counts alone, skipping the per-row pack.
+    """A floor on the bytes an Impulse Tracker module of this shape occupies, from counts alone.
 
-    A packed pattern spends at least a terminator per row and a marker plus a volume byte per present cell;
-    note, instrument and mask bytes only ever add to that. With the PCM and record overhead computed
-    exactly, this bounds the file below without an assignment — enough for the planner to reject a candidate
-    whose *minimum* already overruns the budget, and it can never reject a feasible one because the true
-    size is always at least this.
+    Takes the row and present-cell totals of a whole song rather than an assignment, so it costs nothing
+    to evaluate and can never reject a candidate that would have fit.
     """
-    n_patterns = max(1, len(pattern_slices(n_rows, rows_per_pattern=rows_per_pattern)))
-    pattern_min = n_rows + 2 * n_cells
-    pcm = _pcm_bytes(n_stored_samples, pcm_frames, bits_per_frame)
-    headers = _headers_bytes(n_stored_samples, n_patterns)
-    return pattern_min + pcm + headers
+    n_patterns = IT_BINDING.pattern_count(n_rows)
+    pattern_floor = n_rows + 2 * n_cells
+    return (
+        pattern_floor
+        + _pcm_bytes(n_stored_samples, pcm_frames, bits_per_frame)
+        + _record_bytes(n_stored_samples, n_patterns)
+    )

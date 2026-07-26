@@ -55,6 +55,7 @@ dependencies = [
     { name = "scipy" },
     { name = "soundfile" },
     { name = "tqdm" },
+    { name = "trackmod" },
 ]
 
 [package.dev-dependencies]
@@ -78,6 +79,7 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.13" },
     { name = "soundfile", specifier = ">=0.12" },
     { name = "tqdm", specifier = "==4.69.0" },
+    { name = "trackmod", editable = "trackmod" },
 ]
 
 [package.metadata.requires-dev]
@@ -652,6 +654,34 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8c/69/40407dfc835517f058b603dbf37a6df094d8582b015a51eddc988febbcb7/tqdm-4.69.0.tar.gz", hash = "sha256:700c5e85dcd5f009dd6222588a29180a193a748247a5d855b4d67db93d79a53b", size = 792569, upload-time = "2026-07-17T18:09:06.2Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fe/21/99a0cdaf54eb35e77623c41b5a2c9472ee4404bba687052791fe2aba6773/tqdm-4.69.0-py3-none-any.whl", hash = "sha256:9979978912be667a6ef21fd5d8abf54e324e63d82f7f43c360792ebc2bc4e622", size = 676680, upload-time = "2026-07-17T18:09:04.172Z" },
+]
+
+[[package]]
+name = "trackmod"
+version = "0.1.0"
+source = { editable = "trackmod" }
+dependencies = [
+    { name = "numpy" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=2.1" },
+    { name = "pydantic", specifier = ">=2.13.4" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "black", specifier = "==26.5.1" },
+    { name = "isort", specifier = "==8.0.1" },
+    { name = "mypy", specifier = "==2.1.0" },
+    { name = "pre-commit", specifier = "==4.6.0" },
+    { name = "pylint", specifier = "==4.0.6" },
+    { name = "pylint-pydantic", specifier = "==0.4.1" },
+    { name = "pytest", specifier = "==9.1.1" },
+    { name = "pytest-cov", specifier = "==7.1.0" },
+    { name = "pytest-xdist", specifier = "==3.8.0" },
 ]
 
 [[package]]

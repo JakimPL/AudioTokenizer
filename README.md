@@ -11,11 +11,18 @@ See `docs/architecture.md` for the package map and `docs/guidelines.md` for the 
 
 ## Install
 
-The project is managed with [`uv`](https://docs.astral.sh/uv/):
+The file formats live in [`trackmod`](https://github.com/JakimPL/TrackMod), taken here as a git submodule
+so a checkout pins the exact revision this project was built against.
+
+The project itself is managed with
+[`uv`](https://docs.astral.sh/uv/):
 
 ```shell
+git submodule update --init
 uv sync
 ```
+
+A fresh clone can do both in one step with `git clone --recurse-submodules`.
 
 ## Usage
 
@@ -23,7 +30,7 @@ uv sync
 uv run audiotokenizer audio/song.wav -o song.it
 ```
 
-`python -m audiotokenizer …` is an equivalent entry point. Input must be **mono, 44100 Hz**; anything else
+`python -m audiotokenizer ...` is an equivalent entry point. Input must be **mono, 44100 Hz**; anything else
 is rejected rather than silently resampled. Every run prints what it spent:
 
 ```text

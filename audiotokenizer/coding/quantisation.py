@@ -17,8 +17,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from numpy.typing import NDArray
-
-from audiotokenizer.it.spec import MAX_VOLUME
+from trackmod.spec.levels import MAX_VOLUME
 
 _DEFAULT_PCM_BITS = 8
 _MIN_HEADROOM = 1.0  # keep the summed reconstruction at or below full scale

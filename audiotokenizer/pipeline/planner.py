@@ -1,10 +1,13 @@
 """Search the configuration lattice for the best-sounding module under a byte budget.
 
-The codec has more knobs than a person should tune by hand — timing (the row length), pool size, profile,
-the sparsity floor, the storage depth — and their interaction with the byte budget is not obvious: a
-richer 127-atom dictionary that keeps its best 64 per row can beat a fixed 88, and a shorter row buys time
-resolution at the cost of pattern bytes. This planner sweeps that lattice and keeps the config with the
-lowest mel distance whose file still fits the budget.
+The codec has more knobs than a person should tune by hand — timing (the row length), pool size, the
+compliance level, the sparsity floor, the storage depth — and their interaction with the byte budget is
+not obvious: a richer 127-atom dictionary that keeps its best 64 per row can beat a fixed 88, and a
+shorter row buys time resolution at the cost of pattern bytes. This planner sweeps that lattice and keeps
+the config with the lowest mel distance whose file still fits the budget.
+
+The sweep is Impulse Tracker's, because its byte model is the one :func:`~audiotokenizer.coding.cost.
+cost_lower_bound` bounds; a FastTracker 2 module is compiled directly rather than planned.
 
 Two facts make the sweep cheap enough to run on a whole song:
 
@@ -30,18 +33,31 @@ from typing import Callable, Final, Iterator, Literal, Sequence
 import numpy as np
 from numpy.typing import NDArray
 from tqdm import tqdm
+from trackmod.core.timing.timing import Timing
+from trackmod.it.timing import exact_timings
+from trackmod.limits.compliance import Compliance
 
 from audiotokenizer.audio.io import SAMPLE_RATE, normalise
 from audiotokenizer.coding.cost import cost_lower_bound
 from audiotokenizer.coding.quantisation import quantise
 from audiotokenizer.coding.selection import select
-from audiotokenizer.it.timing import Timing, exact_timings
-from audiotokenizer.pipeline.compiler import _POLARITIES, CompiledModule, Prepared, _assemble, _prepare
-from audiotokenizer.pipeline.config import DEFAULT_NAME, DEFAULT_TAPER_ALPHA, MAX_ATOMS, Profile, TokenizerConfig
+from audiotokenizer.module.format import Format
+from audiotokenizer.module.samples import POLARITIES
+from audiotokenizer.pipeline.compiler import CompiledModule, Prepared, _assemble, _prepare
+from audiotokenizer.pipeline.config import (
+    DEFAULT_NAME,
+    DEFAULT_SPEED,
+    DEFAULT_TAPER_ALPHA,
+    TokenizerConfig,
+    max_atoms_for,
+)
 
-_DEFAULT_N_ATOMS_GRID: Final = (24, 40, 56, 72, 88, 104, MAX_ATOMS)
+PLANNED_FORMAT: Final = Format.IT  # the format whose byte model the lower bound is written against
+
+_WIDEST_POOL: Final = max_atoms_for(PLANNED_FORMAT, Compliance.EXTENDED)
+_DEFAULT_N_ATOMS_GRID: Final = (24, 40, 56, 72, 88, 104, _WIDEST_POOL)
 _DEFAULT_MIN_ENERGY_GRID: Final = (0.0,)
-_DEFAULT_PROFILES: Final = ("hacked", "strict")
+_DEFAULT_COMPLIANCES: Final = (Compliance.EXTENDED, Compliance.CANONICAL)
 _DEFAULT_PCM_BITS: Final[Literal[8, 16]] = 8
 _MEL_EPS: Final = 1e-9  # a Pareto step must lower mel by at least this to count as an improvement
 
@@ -86,7 +102,7 @@ def plan_compilation(
     signal: NDArray[np.float64],
     *,
     budget_bytes: int,
-    profiles: Sequence[Profile] = _DEFAULT_PROFILES,
+    compliances: Sequence[Compliance] = _DEFAULT_COMPLIANCES,
     n_atoms_grid: Sequence[int] = _DEFAULT_N_ATOMS_GRID,
     min_energy_grid: Sequence[float] = _DEFAULT_MIN_ENERGY_GRID,
     pcm_bits: Literal[8, 16] = _DEFAULT_PCM_BITS,
@@ -96,10 +112,11 @@ def plan_compilation(
 ) -> Plan:
     """Compile ``signal`` with the lowest-mel config whose file fits ``budget_bytes``.
 
-    Sweeps every exact-row timing, and within each the profiles, pool sizes and sparsity floors given.
-    The rate levers (persistence, polarity-sticky) stay off — they are last-resort byte knobs, not quality
-    wins, so the planner leaves them for a person to pin. ``taper_alpha`` is a single run-level value shared
-    by every candidate (it feeds the one SVD per timing), so it is not a search axis and adds no SVDs.
+    Sweeps every exact-row timing, and within each the compliance levels, pool sizes and sparsity floors
+    given. The rate levers (persistence, polarity-sticky) stay off — they are last-resort byte knobs, not
+    quality wins, so the planner leaves them for a person to pin. ``taper_alpha`` is a single run-level
+    value shared by every candidate (it feeds the one SVD per timing), so it is not a search axis and adds
+    no SVDs.
 
     The sweep never discards its work. Only the running best module is held (not every candidate), so a
     long run stays within one signal's memory rather than accumulating hundreds of reconstructions. Each
@@ -122,12 +139,12 @@ def plan_compilation(
     interrupted = False
 
     try:
-        for timing in tqdm(exact_timings(frame_rate=SAMPLE_RATE)):
-            prepared = _prepare(reference, timing, MAX_ATOMS, taper_alpha=taper_alpha)
+        for timing in tqdm(exact_timings(frame_rate=SAMPLE_RATE, speed=DEFAULT_SPEED)):
+            prepared = _prepare(reference, timing, _WIDEST_POOL, taper_alpha=taper_alpha)
             for config in _sweep_configs(
                 timing,
                 available=prepared.n_atoms,
-                profiles=profiles,
+                compliances=compliances,
                 n_atoms_grid=n_atoms_grid,
                 min_energy_grid=min_energy_grid,
                 pcm_bits=pcm_bits,
@@ -144,9 +161,10 @@ def plan_compilation(
                 except Exception:  # pylint: disable=broad-except  # one bad config must not abort the sweep
                     failures += 1
                     continue
-                # Fitting the budget is not enough: a pattern over IT's u16 length field cannot be
-                # serialized, so an unwritable candidate is skipped just like an over-budget one.
-                if compiled.cost.total > budget_bytes or not compiled.cost.writable:
+                # Fitting the budget is not enough: a module that breaks one of its format's bounds — a
+                # pattern over the u16 length field, more channels than the compliance level allows —
+                # cannot be written at all, so it is skipped just like an over-budget one.
+                if compiled.size.total > budget_bytes or not compiled.writable:
                     continue
                 candidates.append(_candidate(compiled))
                 best, best_mel = _keep_better(best, best_mel, compiled, on_best)
@@ -172,7 +190,7 @@ def _sweep_configs(
     timing: Timing,
     *,
     available: int,
-    profiles: Sequence[Profile],
+    compliances: Sequence[Compliance],
     n_atoms_grid: Sequence[int],
     min_energy_grid: Sequence[float],
     pcm_bits: Literal[8, 16],
@@ -180,16 +198,17 @@ def _sweep_configs(
     budget_bytes: int,
     name: str,
 ) -> Iterator[TokenizerConfig]:
-    """Every config to try at one timing — the pool sizes (clamped to the SVD's atoms) × profiles × floors.
+    """Every config to try at one timing — the pool sizes (clamped to the SVD's atoms) × levels × floors.
 
     Flattening the three grids into one generator keeps :func:`plan_compilation`'s loop shallow; the timing
     is fixed here because it alone drives the SVD that the caller shares across the whole yield.
     """
     for n_atoms in _atom_options(n_atoms_grid, available):
-        for profile in profiles:
+        for compliance in compliances:
             for min_energy in min_energy_grid:
-                yield TokenizerConfig.load(
-                    profile=profile,
+                yield TokenizerConfig(
+                    compliance=compliance,
+                    format=PLANNED_FORMAT,
                     tempo=timing.tempo,
                     speed=timing.speed,
                     n_atoms=n_atoms,
@@ -216,7 +235,7 @@ def _lower_bound(prepared: Prepared, config: TokenizerConfig) -> int:
     return cost_lower_bound(
         prepared.n_rows,
         n_cells,
-        n_stored_samples=_POLARITIES * n_used,
+        n_stored_samples=POLARITIES * n_used,
         pcm_frames=prepared.timing.row_frames,
         bits_per_frame=config.pcm_bits,
     )
@@ -263,7 +282,7 @@ def _closer(
 def _candidate(compiled: CompiledModule) -> Candidate:
     return Candidate(
         config=compiled.config,
-        total_bytes=compiled.cost.total,
+        total_bytes=compiled.size.total,
         mel_db=compiled.metrics.mel_distance_db,
         n_atoms_used=compiled.n_atoms_used,
         n_channels_used=compiled.n_channels_used,
@@ -283,9 +302,9 @@ def _pareto(candidates: Sequence[Candidate]) -> tuple[Candidate, ...]:
 
 def format_frontier(frontier: Sequence[Candidate]) -> str:
     """A compact cost-vs-mel table, cheapest first, with the last row the lowest-mel choice."""
-    header = f"{'profile':<7} {'tempo':>5} {'atoms':>5} {'chan':>4} {'KB':>6} {'mel dB':>7}"
+    header = f"{'level':<9} {'tempo':>5} {'atoms':>5} {'chan':>4} {'KB':>6} {'mel dB':>7}"
     rows = [
-        f"{c.config.profile:<7} {c.config.tempo:>5} {c.config.n_atoms:>5} "
+        f"{c.config.compliance:<9} {c.config.tempo:>5} {c.config.n_atoms:>5} "
         f"{c.n_channels_used:>4} {c.total_bytes / 1024:>6.0f} {c.mel_db:>7.2f}"
         for c in frontier
     ]

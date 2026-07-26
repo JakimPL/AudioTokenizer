@@ -1,6 +1,6 @@
 """Command-line entry point: convert a WAV into an Impulse Tracker or FastTracker 2 module.
 
-``audiotokenizer song.wav -o song.it`` compiles the signal with the default OpenMPT-capable profile and
+``audiotokenizer song.wav -o song.it`` compiles the signal at the default, extended compliance level and
 prints what it spent; ``-o song.xm`` (or ``--format xm``) writes a FastTracker 2 module instead, whose
 16-bit tempo word reaches rows far shorter than IT's 255 ceiling allows. ``--strict`` keeps the file a
 canonical tracker module (IT 64 channels / XM 32). Tuning knobs (tempo, speed, dictionary size, sparsity
@@ -17,21 +17,23 @@ from typing import Final, Sequence
 
 import numpy as np
 from numpy.typing import NDArray
+from trackmod.limits.compliance import Compliance
 
 from audiotokenizer.audio.io import SAMPLE_RATE, load_audio
+from audiotokenizer.module.format import Format
 from audiotokenizer.pipeline.compiler import CompiledModule, compile_signal
 from audiotokenizer.pipeline.config import (
     DEFAULT_BUDGET_BYTES,
+    DEFAULT_COMPLIANCE,
     DEFAULT_MIN_ENERGY,
     DEFAULT_PCM_BITS,
     DEFAULT_PERSISTENCE,
     DEFAULT_POLARITY_STICKY,
     DEFAULT_SPEED,
     DEFAULT_TAPER_ALPHA,
-    Format,
     TokenizerConfig,
 )
-from audiotokenizer.pipeline.planner import format_frontier, plan_compilation
+from audiotokenizer.pipeline.planner import PLANNED_FORMAT, format_frontier, plan_compilation
 
 _DEFAULT_TEMPO: Final = 125  # speed 1, tempo 125 -> 882 frames per row at 44100 Hz
 _DEFAULT_ATOMS: Final = 88  # dense 88-channel pool fits the 2 MB budget on a ~170 s song
@@ -45,12 +47,15 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--format",
-        choices=("it", "xm"),
+        type=Format,
+        choices=tuple(Format),
         default=None,
         help="output format: it (Impulse Tracker) or xm (FastTracker 2); default inferred from -o suffix, else it",
     )
     parser.add_argument(
-        "--strict", action="store_true", help="canonical channel count (IT 64 / XM 32); default is hacked"
+        "--strict",
+        action="store_true",
+        help="hold the module to what the tracker itself honours (IT 64 channels / XM 32); default is extended",
     )
     parser.add_argument(
         "--plan",
@@ -97,7 +102,7 @@ def _plan(args: argparse.Namespace, signal: NDArray[np.float64], output: Path) -
     plan = plan_compilation(
         signal,
         budget_bytes=args.budget,
-        profiles=("strict",) if args.strict else ("hacked", "strict"),
+        compliances=(Compliance.CANONICAL,) if args.strict else (Compliance.EXTENDED, Compliance.CANONICAL),
         pcm_bits=args.pcm_bits,
         taper_alpha=args.taper,
         name=args.input.stem,
@@ -115,13 +120,26 @@ def _plan(args: argparse.Namespace, signal: NDArray[np.float64], output: Path) -
     return plan.module
 
 
+def _refuse(compiled: CompiledModule) -> str:
+    """The message for a module the chosen format will not store, listing every bound it breaks.
+
+    A compilation can be perfectly good audio and still be unwritable — a canonical Impulse Tracker
+    pattern has a 32-row floor, so a very short signal at a long row simply is not one. Naming the bounds
+    and the level they were read at is what tells a caller whether to change the timing or drop
+    ``--strict``, so it is reported rather than raised as a traceback.
+    """
+    lines = [f"  {violation}" for violation in compiled.violations]
+    hint = " (drop --strict to write an extended module)" if compiled.config.compliance is Compliance.CANONICAL else ""
+    return "\n".join([f"cannot write this {compiled.config.format} module{hint}:", *lines])
+
+
 def _resolve_format(args: argparse.Namespace) -> Format:
     """Pick the output format: an explicit ``--format``, else the ``-o`` suffix, else IT."""
     if args.format is not None:
-        return args.format  # type: ignore[no-any-return]
-    if args.output is not None and args.output.suffix.lower() == ".xm":
-        return "xm"
-    return "it"
+        return Format(args.format)
+    if args.output is not None and args.output.suffix.lower() == f".{Format.XM}":
+        return Format.XM
+    return Format.IT
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -133,12 +151,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     module_format = _resolve_format(args)
     output = args.output or args.input.with_suffix(f".{module_format}")
     if args.plan:
-        if module_format == "xm":
+        if module_format is not PLANNED_FORMAT:
             raise SystemExit("the --plan config search is IT-only; drop --format xm (or -o *.xm) to plan")
         compiled = _plan(args, signal, output)
     else:
-        config = TokenizerConfig.load(
-            profile="strict" if args.strict else "hacked",
+        config = TokenizerConfig(
+            compliance=Compliance.CANONICAL if args.strict else DEFAULT_COMPLIANCE,
             format=module_format,
             tempo=args.tempo,
             speed=args.speed,
@@ -152,6 +170,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             name=args.input.stem,
         )
         compiled = compile_signal(signal, config)
+
+    if not compiled.writable:
+        raise SystemExit(_refuse(compiled))
 
     compiled.save(output)
     print(compiled.summary())
