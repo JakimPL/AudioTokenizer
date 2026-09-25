@@ -79,12 +79,7 @@ Both write the same song; the codec pays for the difference in four places, all 
 
 ## Tests
 
-`tests/` mirrors this map, plus two suites that answer to the outside world:
-
-- `tests/pipeline/test_golden.py` pins the compiled output against the modules produced before the
-  `trackmod` extraction. FastTracker 2 reproduces byte-for-byte; Impulse Tracker writes the same content
-  in one byte fewer, so it is compared by parsing both files back and by rendering them.
-- `tests/render/` drives the real tracker. `test_openmpt.py` correlates a render against the
-  reconstruction the codec predicts, and `test_limits.py` plays each extended bound — 127 IT channels, 192
-  XM channels, XM at 441 BPM — asserting the rendered audio lasts as long as the row clock says, which a
-  quietly clamped field would fail.
+`tests/` mirrors this map, plus `tests/render/`, which answers to the outside world by driving the real
+tracker. `test_openmpt.py` correlates a render against the reconstruction the codec predicts, and
+`test_limits.py` plays each extended bound — 127 IT channels, 192 XM channels, XM at 441 BPM — asserting
+the rendered audio lasts as long as the row clock says, which a quietly clamped field would fail.
