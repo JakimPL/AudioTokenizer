@@ -4,8 +4,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from trackmod.it.spec.identity import MAGIC_MODULE
-from trackmod.xm.spec.identity import MAGIC
+from trackmod.trackers.it.spec.identity import MAGIC_MODULE
+from trackmod.trackers.xm.spec.identity import MAGIC
 
 from audiotokenizer.audio.io import SAMPLE_RATE, save_audio
 from audiotokenizer.cli import _build_parser, _resolve_format, main
@@ -53,15 +53,22 @@ def test_cli_writes_an_it_by_default_and_names_it_after_the_input(tmp_path: Path
 
 
 def test_strict_holds_the_module_to_the_canonical_channel_count(tmp_path: Path) -> None:
-    # --strict is the compliance lever: the same pool that spreads past 64 channels by default is held to
-    # what the tracker itself honours, so the file stays a canonical module.
+    # --strict is the compliance lever: the same pool that spreads past 32 FastTracker 2 channels by default
+    # is held to what the tracker's own editor accepts, so the file stays a canonical module.
     source = tmp_path / "in.wav"
     _write_tone(source, seconds=3.0)
-    strict = tmp_path / "strict.it"
-    loose = tmp_path / "loose.it"
+    strict = tmp_path / "strict.xm"
+    loose = tmp_path / "loose.xm"
     main([str(source), "-o", str(strict), "--tempo", "125", "--atoms", "88", "--strict"])
     main([str(source), "-o", str(loose), "--tempo", "125", "--atoms", "88"])
     assert strict.read_bytes() != loose.read_bytes()
+
+
+def test_strict_compiles_the_widest_canonical_pool_by_default(tmp_path: Path) -> None:
+    # Canonical Impulse Tracker stores 99 samples, so the default pool narrows to the 49 atoms they hold.
+    source = tmp_path / "in.wav"
+    _write_tone(source, seconds=3.0)
+    assert main([str(source), "-o", str(tmp_path / "strict.it"), "--tempo", "125", "--strict"]) == 0
 
 
 def test_a_module_the_format_refuses_is_reported_rather_than_traced(tmp_path: Path) -> None:

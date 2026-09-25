@@ -28,10 +28,10 @@ from trackmod.core.songs.song import Song
 from trackmod.limits.compliance import Compliance
 from trackmod.limits.table import Limits
 from trackmod.spec.levels import MAX_VOLUME
-from trackmod.xm.limits import xm_limits
-from trackmod.xm.module import XMModule
-from trackmod.xm.settings import XMSettings
-from trackmod.xm.spec.ranges import CANONICAL_SAMPLES_PER_INSTRUMENT, MAX_PATTERNS
+from trackmod.trackers.xm.limits import xm_limits
+from trackmod.trackers.xm.module import XMModule
+from trackmod.trackers.xm.settings import XMSettings
+from trackmod.trackers.xm.spec.ranges import CANONICAL_MAX_PATTERNS, CANONICAL_SAMPLES_PER_INSTRUMENT
 
 from audiotokenizer.module.binding import gained
 from audiotokenizer.module.format import Format
@@ -67,7 +67,7 @@ class XMBinding:
         height the 256-entry order table forces is therefore the most feasible split, and it costs nothing
         in cell bytes because the packing keeps no per-pattern memory to reset.
         """
-        height = max(1, -(-rows // MAX_PATTERNS))
+        height = max(1, -(-rows // CANONICAL_MAX_PATTERNS))
         return max(1, -(-rows // height))
 
     def module(self, song: Song, *, compliance: Compliance) -> XMModule:

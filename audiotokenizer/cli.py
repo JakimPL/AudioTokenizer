@@ -1,12 +1,13 @@
 """Command-line entry point: convert a WAV into an Impulse Tracker or FastTracker 2 module.
 
-``audiotokenizer song.wav -o song.it`` compiles the signal at the default, extended compliance level and
-prints what it spent; ``-o song.xm`` (or ``--format xm``) writes a FastTracker 2 module instead, whose
-16-bit tempo word reaches rows far shorter than IT's 255 ceiling allows. ``--strict`` keeps the file a
-canonical tracker module (IT 64 channels / XM 32). Tuning knobs (tempo, speed, dictionary size, sparsity
-floor, and the ``--persistence``/``--sticky`` rate levers) are exposed so the same command drives
-experimentation. ``--plan`` instead searches the config lattice for the best-sounding IT module that still
-fits ``--budget``, printing the cost-vs-quality frontier it settled on.
+``audiotokenizer song.wav -o song.it`` compiles the signal at the default, extended compliance level, which
+plays in OpenMPT and libopenmpt, and prints what it spent; ``-o song.xm`` (or ``--format xm``) writes a
+FastTracker 2 module instead, whose tempo reaches 1000 for rows far shorter than IT's 255 ceiling allows.
+``--strict`` keeps the file a canonical tracker module (IT: 64 channels and 49 atoms; XM: 32 channels).
+Tuning knobs (tempo, speed, dictionary size, sparsity floor, and the ``--persistence``/``--sticky`` rate
+levers) are exposed so the same command drives experimentation. ``--plan`` instead searches the config
+lattice for the best-sounding IT module that still fits ``--budget``, printing the cost-vs-quality frontier
+it settled on.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from audiotokenizer.pipeline.config import (
     DEFAULT_SPEED,
     DEFAULT_TAPER_ALPHA,
     TokenizerConfig,
+    max_atoms_for,
 )
 from audiotokenizer.pipeline.planner import PLANNED_FORMAT, format_frontier, plan_compilation
 
@@ -55,7 +57,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--strict",
         action="store_true",
-        help="hold the module to what the tracker itself honours (IT 64 channels / XM 32); default is extended",
+        help="hold the module to what the tracker's own editor accepts (IT: 64 channels, 49 atoms; XM: 32 channels); "
+        "the default plays in OpenMPT",
     )
     parser.add_argument(
         "--plan",
@@ -63,10 +66,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="search configs for the best quality under --budget (IT only; ignores --tempo/--atoms/--min-energy)",
     )
     parser.add_argument(
-        "--tempo", type=int, default=_DEFAULT_TEMPO, help="tempo (BPM); sets the row length. XM allows > 255"
+        "--tempo", type=int, default=_DEFAULT_TEMPO, help="tempo (BPM); sets the row length. XM reaches past 255"
     )
     parser.add_argument("--speed", type=int, default=DEFAULT_SPEED, help="ticks per row; raise to lengthen the row")
-    parser.add_argument("--atoms", type=int, default=_DEFAULT_ATOMS, help="dictionary size (the atom pool)")
+    parser.add_argument(
+        "--atoms",
+        type=int,
+        default=None,
+        help=f"dictionary size (the atom pool); default {_DEFAULT_ATOMS}, capped at what the compliance level routes",
+    )
     parser.add_argument("--min-energy", type=float, default=DEFAULT_MIN_ENERGY, help="drop projections below this")
     parser.add_argument(
         "--persistence", type=float, default=DEFAULT_PERSISTENCE, help="λ penalty for switching atoms (0 = off)"
@@ -133,6 +141,24 @@ def _refuse(compiled: CompiledModule) -> str:
     return "\n".join([f"cannot write this {compiled.config.format} module{hint}:", *lines])
 
 
+def _compliance(args: argparse.Namespace) -> Compliance:
+    """The level every bound is read at: canonical under ``--strict``, the default level otherwise."""
+    return Compliance.CANONICAL if args.strict else DEFAULT_COMPLIANCE
+
+
+def _atoms(args: argparse.Namespace, module_format: Format, compliance: Compliance) -> int:
+    """The dictionary size to compile with: ``--atoms`` when given, else the default pool.
+
+    The default pool is capped at what the format routes at ``compliance``, so a plain ``--strict`` run
+    compiles the widest canonical dictionary. An explicit ``--atoms`` is checked by the config as stated.
+    """
+    stated: int | None = args.atoms
+    if stated is not None:
+        return stated
+
+    return min(_DEFAULT_ATOMS, max_atoms_for(module_format, compliance))
+
+
 def _resolve_format(args: argparse.Namespace) -> Format:
     """Pick the output format: an explicit ``--format``, else the ``-o`` suffix, else IT."""
     if args.format is not None:
@@ -155,12 +181,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise SystemExit("the --plan config search is IT-only; drop --format xm (or -o *.xm) to plan")
         compiled = _plan(args, signal, output)
     else:
+        compliance = _compliance(args)
         config = TokenizerConfig(
-            compliance=Compliance.CANONICAL if args.strict else DEFAULT_COMPLIANCE,
+            compliance=compliance,
             format=module_format,
             tempo=args.tempo,
             speed=args.speed,
-            n_atoms=args.atoms,
+            n_atoms=_atoms(args, module_format, compliance),
             min_energy=args.min_energy,
             persistence=args.persistence,
             polarity_sticky=args.sticky,

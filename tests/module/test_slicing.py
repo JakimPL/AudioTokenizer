@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import pytest
-from trackmod.it.spec.ranges import MAX_ROWS as IT_MAX_ROWS
-from trackmod.xm.spec.ranges import MAX_PATTERNS as XM_MAX_PATTERNS
-from trackmod.xm.spec.ranges import MAX_ROWS as XM_MAX_ROWS
+from trackmod.trackers.it.spec.ranges import MAX_ROWS as IT_MAX_ROWS
+from trackmod.trackers.xm.spec.ranges import CANONICAL_MAX_PATTERNS as XM_MAX_PATTERNS
+from trackmod.trackers.xm.spec.ranges import MAX_ROWS as XM_MAX_ROWS
 
 from audiotokenizer.module.it import IT_BINDING
 from audiotokenizer.module.slicing import pattern_slices

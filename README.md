@@ -11,18 +11,12 @@ See `docs/architecture.md` for the package map and `docs/guidelines.md` for the 
 
 ## Install
 
-The file formats live in [`trackmod`](https://github.com/JakimPL/TrackMod), taken here as a git submodule
-so a checkout pins the exact revision this project was built against.
-
-The project itself is managed with
-[`uv`](https://docs.astral.sh/uv/):
+The file formats live in [`trackmod`](https://pypi.org/project/trackmod/), installed from PyPI with the
+rest of the dependencies. The project itself is managed with [`uv`](https://docs.astral.sh/uv/):
 
 ```shell
-git submodule update --init
 uv sync
 ```
-
-A fresh clone can do both in one step with `git clone --recurse-submodules`.
 
 ## Usage
 
@@ -52,9 +46,9 @@ song  (hacked, 169.2 s)
 |---|---|---|
 | `input` | — | input WAV, mono 44100 Hz |
 | `-o, --output` | `<input>.it` | output module path |
-| `--strict` | off | canonical 64-channel IT (off = 127-channel "hacked" IT, OpenMPT only) |
+| `--strict` | off | canonical IT: 64 channels, 49 atoms (off = 127-channel "hacked" IT, OpenMPT only) |
 | `--tempo` | `125` | IT tempo; sets the row length in frames (speed 1, tempo 125 → 882) |
-| `--atoms` | `88` | dictionary size (the atom pool / peak channel count) |
+| `--atoms` | `88` (`49` with `--strict`) | dictionary size (the atom pool / peak channel count) |
 | `--min-energy` | `0.0` | drop per-row projections weaker than this |
 | `--pcm-bits` | `8` | stored sample depth (`8` or `16`) |
 | `--budget` | `2097152` | byte budget to report `fits`/`OVER` against |
@@ -64,7 +58,8 @@ song  (hacked, 169.2 s)
 
 - **hacked** (default) — up to **127 channels**. Uses OpenMPT's 7-bit channel mask; plays correctly in
   libopenmpt/OpenMPT but is beyond canonical Impulse Tracker.
-- **strict** (`--strict`) — **64 channels**, a faithful canonical `.it` for any conforming player.
+- **strict** (`--strict`) — **64 channels** and at most **49 atoms**, since canonical Impulse Tracker
+  stores 99 samples and each atom takes two. A faithful canonical `.it` for any conforming player.
 
 ## Measuring fidelity
 

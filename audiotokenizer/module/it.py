@@ -21,12 +21,12 @@ from numpy.typing import NDArray
 from trackmod.core.samples.depth import BitDepth
 from trackmod.core.samples.sample import Sample
 from trackmod.core.songs.song import Song
-from trackmod.it.limits import it_limits
-from trackmod.it.module import ITModule
-from trackmod.it.spec.ranges import MAX_ROWS
 from trackmod.limits.compliance import Compliance
 from trackmod.limits.table import Limits
 from trackmod.spec.pitch import NOTE_COUNT
+from trackmod.trackers.it.limits import it_limits
+from trackmod.trackers.it.module import ITModule
+from trackmod.trackers.it.spec.ranges import MAX_ROWS
 
 from audiotokenizer.module.format import Format
 from audiotokenizer.module.routing import Routing

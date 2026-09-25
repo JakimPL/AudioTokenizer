@@ -34,8 +34,8 @@ import numpy as np
 from numpy.typing import NDArray
 from tqdm import tqdm
 from trackmod.core.timing.timing import Timing
-from trackmod.it.timing import exact_timings
 from trackmod.limits.compliance import Compliance
+from trackmod.trackers.it.timing import TIMINGS as IT_TIMINGS
 
 from audiotokenizer.audio.io import SAMPLE_RATE, normalise
 from audiotokenizer.coding.cost import cost_lower_bound
@@ -139,7 +139,7 @@ def plan_compilation(
     interrupted = False
 
     try:
-        for timing in tqdm(exact_timings(frame_rate=SAMPLE_RATE, speed=DEFAULT_SPEED)):
+        for timing in tqdm(IT_TIMINGS.exact_timings(frame_rate=SAMPLE_RATE, speed=DEFAULT_SPEED)):
             prepared = _prepare(reference, timing, _WIDEST_POOL, taper_alpha=taper_alpha)
             for config in _sweep_configs(
                 timing,
@@ -198,13 +198,14 @@ def _sweep_configs(
     budget_bytes: int,
     name: str,
 ) -> Iterator[TokenizerConfig]:
-    """Every config to try at one timing — the pool sizes (clamped to the SVD's atoms) × levels × floors.
+    """Every config to try at one timing — the levels × pool sizes (clamped per level) × floors.
 
     Flattening the three grids into one generator keeps :func:`plan_compilation`'s loop shallow; the timing
     is fixed here because it alone drives the SVD that the caller shares across the whole yield.
     """
-    for n_atoms in _atom_options(n_atoms_grid, available):
-        for compliance in compliances:
+    for compliance in compliances:
+        ceiling = min(available, max_atoms_for(PLANNED_FORMAT, compliance))
+        for n_atoms in _atom_options(n_atoms_grid, ceiling):
             for min_energy in min_energy_grid:
                 yield TokenizerConfig(
                     compliance=compliance,
@@ -220,9 +221,13 @@ def _sweep_configs(
                 )
 
 
-def _atom_options(grid: Sequence[int], available: int) -> tuple[int, ...]:
-    """The distinct pool sizes to try: every grid value clamped to the atoms the SVD actually produced."""
-    return tuple(sorted({min(n, available) for n in grid if n >= 1}))
+def _atom_options(grid: Sequence[int], ceiling: int) -> tuple[int, ...]:
+    """The distinct pool sizes to try: every grid value clamped to the ceiling.
+
+    The ceiling is the smaller of the atoms the SVD produced and the pool the compliance level routes, so
+    each level tries its own widest pool alongside the grid values below it.
+    """
+    return tuple(sorted({min(n, ceiling) for n in grid if n >= 1}))
 
 
 def _lower_bound(prepared: Prepared, config: TokenizerConfig) -> int:

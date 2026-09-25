@@ -5,13 +5,13 @@ the dictionary size, the sparsity floor and the storage depth, plus the complian
 read at. Fields the caller varies per run carry no defaults; the few genuinely seldom-changed settings
 default to a named constant.
 
-Compliance is what used to be a "profile", and it now means something the format itself states rather than
-a pair of numbers repeated here. :attr:`~trackmod.limits.compliance.Compliance.CANONICAL` holds the module
-to what the tracker it names actually honoured — 64 channels for Impulse Tracker, 32 for FastTracker 2.
-:attr:`~trackmod.limits.compliance.Compliance.EXTENDED` holds it to what the record layout can physically
-store, which is where the wide modules live: 127 IT channels, 192 XM channels, and a 16-bit XM tempo that
-reaches rows an 8-bit one cannot. Impulse Tracker's tempo is a single byte at both levels, so asking for a
-16-bit tempo there is refused rather than silently written into a field too small for it.
+Compliance is a level the format itself states, read off its limit table.
+:attr:`~trackmod.limits.compliance.Compliance.CANONICAL` holds the module to what the tracker it names
+accepted in its own editor: 64 channels and 99 samples for Impulse Tracker, so a dictionary of at most 49
+atoms, and 32 channels for FastTracker 2. :attr:`~trackmod.limits.compliance.Compliance.EXTENDED` holds it
+to what OpenMPT and libopenmpt play back faithfully, which is where the wide modules live: 127 channels in
+either format, and a FastTracker 2 tempo up to 1000 that reaches rows a one-byte tempo cannot. Impulse
+Tracker stores its tempo in one byte at every level, so the config refuses a tempo past 255 there.
 
 Two rate levers trade a little fidelity for pattern bytes, both off by default so the codec is unchanged
 until asked: ``persistence`` penalises switching a channel to a new atom (a saved note byte), and
@@ -52,9 +52,16 @@ DEFAULT_COMPLIANCE: Final = Compliance.EXTENDED
 
 
 def max_atoms_for(module_format: Format, compliance: Compliance) -> int:
-    """The widest dictionary a format can route, each atom costing the two samples its polarities need."""
-    limits = binding_for(module_format).limits(compliance)
-    return limits.bound(Capability.SAMPLES).maximum // POLARITIES
+    """The widest dictionary a format can route, each atom costing the two samples its polarities need.
+
+    The sample table and the instruments that address it cap the pool together: each instrument's keymap
+    reaches a fixed number of samples, so the pool is whichever of the stored and the routable samples is
+    smaller.
+    """
+    binding = binding_for(module_format)
+    limits = binding.limits(compliance)
+    routable = limits.bound(Capability.INSTRUMENTS).maximum * binding.routing.samples_per_instrument
+    return min(limits.bound(Capability.SAMPLES).maximum, routable) // POLARITIES
 
 
 #: The widest pool any format admits, which is the field bound; :attr:`TokenizerConfig.max_atoms` is the

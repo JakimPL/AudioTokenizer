@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 from trackmod.core.samples.depth import BitDepth
 from trackmod.core.songs.playback import Playback
+from trackmod.core.voices.voices import InstrumentVoices
 from trackmod.limits.compliance import Compliance
 from trackmod.spec.grid import EMPTY
 
@@ -65,7 +66,7 @@ def test_the_song_holds_every_row_and_the_grid_width(
     assert song.channels == CHANNELS
     assert sum(pattern.rows for pattern in song.patterns) == ROWS
     assert song.order.entries == tuple(range(len(song.patterns)))
-    assert len(song.samples) == POLARITIES * N_ATOMS
+    assert len(song.voices.samples) == POLARITIES * N_ATOMS
 
 
 @pytest.mark.parametrize("binding", [IT_BINDING, XM_BINDING])
@@ -75,12 +76,14 @@ def test_every_note_the_song_plays_resolves_to_a_stored_sample(
     # The routing, the instruments and the note column have to agree, or a cell plays silence — or worse,
     # the wrong atom. Walking the song the way a tracker does is the only check that covers all three.
     song = song_for(binding, stored, assignment)
+    voices = song.voices
+    assert isinstance(voices, InstrumentVoices)
     for pattern in song.patterns:
         rows, channels = np.nonzero(pattern.note != EMPTY)
         for row, channel in zip(rows.tolist(), channels.tolist()):
             cell = pattern.cell(row, channel)
             assert cell.instrument is not None or not binding.restates_instrument
-            instrument = song.instruments[cell.instrument if cell.instrument is not None else 0]
+            instrument = voices.instruments[cell.instrument if cell.instrument is not None else 0]
             assert instrument.assignment(cell.note) is not None
 
 

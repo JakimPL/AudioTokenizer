@@ -17,8 +17,8 @@ from __future__ import annotations
 
 from typing import Final
 
-from trackmod.it.spec.orders import ORDER_TERMINATOR_BYTES
-from trackmod.it.spec.sizes import (
+from trackmod.trackers.it.spec.orders import ORDER_TERMINATOR_BYTES
+from trackmod.trackers.it.spec.sizes import (
     FILE_HEADER_BYTES,
     INSTRUMENT_HEADER_BYTES,
     OFFSET_TABLE_ENTRY_BYTES,

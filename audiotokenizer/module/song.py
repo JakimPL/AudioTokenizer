@@ -12,6 +12,7 @@ from trackmod.core.samples.depth import BitDepth
 from trackmod.core.songs.order import OrderList
 from trackmod.core.songs.playback import Playback
 from trackmod.core.songs.song import Song
+from trackmod.core.voices.voices import InstrumentVoices
 
 from audiotokenizer.coding.assignment import Assignment
 from audiotokenizer.coding.quantisation import StoredAtoms
@@ -48,7 +49,9 @@ def build_song(
         channels=assignment.n_channels,
         patterns=patterns,
         order=OrderList.sequential(len(patterns)),
-        instruments=dictionary_instruments(binding.routing, slots=len(samples)),
-        samples=samples,
+        voices=InstrumentVoices(
+            instruments=dictionary_instruments(binding.routing, slots=len(samples)),
+            samples=samples,
+        ),
         playback=playback,
     )

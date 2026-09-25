@@ -18,12 +18,12 @@ from numpy.typing import NDArray
 from trackmod.core.samples.depth import BitDepth
 from trackmod.core.songs.playback import Playback
 from trackmod.core.timing.timing import Timing
-from trackmod.it.timing import row_frames as it_row_frames
 from trackmod.limits.violation import Violation
 from trackmod.module.protocol import TrackerModule
 from trackmod.module.size import SizeReport
 from trackmod.spec.levels import MAX_VOLUME
-from trackmod.xm.timing import row_frames as xm_row_frames
+from trackmod.trackers.it.timing import TIMINGS as IT_TIMINGS
+from trackmod.trackers.xm.timing import TIMINGS as XM_TIMINGS
 
 from audiotokenizer.audio.framing import frame, tukey_window, unframe
 from audiotokenizer.audio.io import SAMPLE_RATE, normalise, save_audio
@@ -268,11 +268,11 @@ def timing_for(config: TokenizerConfig, *, frame_rate: int) -> Timing:
     Raises:
         ValueError: when the speed and tempo give a row that is not a whole number of frames.
     """
-    frames = xm_row_frames if config.format is config.format.XM else it_row_frames
+    timings = XM_TIMINGS if config.format is config.format.XM else IT_TIMINGS
     return Timing(
         speed=config.speed,
         tempo=config.tempo,
-        row_frames=frames(config.speed, config.tempo, frame_rate=frame_rate),
+        row_frames=timings.row_frames(config.speed, config.tempo, frame_rate=frame_rate),
     )
 
 

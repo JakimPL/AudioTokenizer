@@ -42,8 +42,8 @@ def test_compilation_respects_channel_and_atom_caps(signal: NDArray[np.float64])
 
 
 def test_extended_compliance_allows_more_than_the_canonical_channels() -> None:
-    assert TokenizerConfig(compliance=EXTENDED, tempo=125, n_atoms=100).max_channels == 127
-    assert TokenizerConfig(compliance=CANONICAL, tempo=125, n_atoms=100).max_channels == 64
+    assert TokenizerConfig(compliance=EXTENDED, tempo=125, n_atoms=40).max_channels == 127
+    assert TokenizerConfig(compliance=CANONICAL, tempo=125, n_atoms=40).max_channels == 64
 
 
 def test_too_many_atoms_is_rejected() -> None:
@@ -53,7 +53,7 @@ def test_too_many_atoms_is_rejected() -> None:
 
 
 def test_a_tempo_the_format_cannot_store_is_refused_at_the_config() -> None:
-    # IT's header tempo is a single byte at both compliance levels, so a 16-bit tempo is refused rather
+    # IT's header tempo is a single byte at every compliance level, so a 16-bit tempo is refused rather
     # than written into a field too small to hold it. XM's is a word, so the same tempo is fine there.
     with pytest.raises(ValueError):
         TokenizerConfig(compliance=EXTENDED, format=Format.IT, tempo=441, n_atoms=16)

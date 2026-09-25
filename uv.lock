@@ -79,7 +79,7 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.13" },
     { name = "soundfile", specifier = ">=0.12" },
     { name = "tqdm", specifier = "==4.69.0" },
-    { name = "trackmod", editable = "trackmod" },
+    { name = "trackmod", specifier = ">=0.2.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -658,30 +658,15 @@ wheels = [
 
 [[package]]
 name = "trackmod"
-version = "0.1.0"
-source = { editable = "trackmod" }
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
     { name = "pydantic" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "numpy", specifier = ">=2.1" },
-    { name = "pydantic", specifier = ">=2.13.4" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "black", specifier = "==26.5.1" },
-    { name = "isort", specifier = "==8.0.1" },
-    { name = "mypy", specifier = "==2.1.0" },
-    { name = "pre-commit", specifier = "==4.6.0" },
-    { name = "pylint", specifier = "==4.0.6" },
-    { name = "pylint-pydantic", specifier = "==0.4.1" },
-    { name = "pytest", specifier = "==9.1.1" },
-    { name = "pytest-cov", specifier = "==7.1.0" },
-    { name = "pytest-xdist", specifier = "==3.8.0" },
+sdist = { url = "https://files.pythonhosted.org/packages/1c/54/deec696fb2123aec8f93c502814df29607c7743d67f3aee445190770f3df/trackmod-0.2.0.tar.gz", hash = "sha256:1bfc65fcb64bc5ddfdd6a30431c3f2b064f60b8d1b8db34d3dfa486618a6a97e", size = 333447, upload-time = "2026-09-25T12:12:47.234Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/11/ca/8c63097afbcb1505cf8e9686166bbfe67a0520588640e243c807dd59bbb3/trackmod-0.2.0-py3-none-any.whl", hash = "sha256:cbdd024dded8eb108ad0c4b0f5a622967040b75565823c5a93f122b4fba4c42f", size = 289950, upload-time = "2026-09-25T12:12:45.72Z" },
 ]
 
 [[package]]
